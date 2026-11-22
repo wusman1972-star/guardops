@@ -58,9 +58,10 @@ BEGIN
                                    jsonb_build_object(
                                        'name',     a.attname,
                                        'type',     format_type(a.atttypid, a.atttypmod),
-                                       'nullable', NOT a.attnotnull
+                                       'nullable', NOT (a.attnotnull OR COALESCE(t.typnotnull, false))
                                    ) ORDER BY a.attnum)
                           FROM pg_attribute a
+                          LEFT JOIN pg_type t ON t.oid = a.atttypid
                          WHERE a.attrelid = c.oid
                            AND a.attnum > 0
                            AND NOT a.attisdropped),
@@ -85,6 +86,7 @@ BEGIN
               FROM pg_proc p
               JOIN pg_namespace n ON n.oid = p.pronamespace
              WHERE n.nspname = %L
+               AND p.prokind <> 'a'
             UNION ALL
             SELECT n.nspname::text,
                    (c.relname || '.' || t.tgname)::text,

@@ -61,7 +61,9 @@ BEGIN
         WHERE n.nspname = p_schema
           AND c.relname = v_tbl.table_name;
 
-        v_obj_count := v_obj_count + 1;
+        IF FOUND THEN
+            v_obj_count := v_obj_count + 1;
+        END IF;
     END LOOP;
 
     -- One row per function (overloads each get their own row via specific_name)
@@ -105,19 +107,32 @@ BEGIN
         v_obj_count := v_obj_count + 1;
     END LOOP;
 
-    -- One row per trigger+table; multiple events on the same trigger are
-    -- aggregated into a single events string (e.g. 'DELETE OR INSERT OR UPDATE')
+    -- One row per trigger; events decoded from pg_trigger.tgtype bitmask so that
+    -- TRUNCATE triggers (absent from information_schema.triggers) are included.
     FOR v_trg IN
         SELECT
-            trigger_name,
-            event_object_table,
-            action_timing,
-            string_agg(event_manipulation, ' OR ' ORDER BY event_manipulation) AS events,
-            min(action_statement) AS action_statement
-        FROM information_schema.triggers
-        WHERE trigger_schema = p_schema
-        GROUP BY trigger_name, event_object_table, action_timing
-        ORDER BY trigger_name, event_object_table
+            t.tgname AS trigger_name,
+            c.relname AS event_object_table,
+            CASE
+                WHEN t.tgtype & 2 > 0  THEN 'BEFORE'
+                WHEN t.tgtype & 64 > 0 THEN 'INSTEAD OF'
+                ELSE 'AFTER'
+            END AS action_timing,
+            (SELECT string_agg(e, ' OR ' ORDER BY e)
+               FROM unnest(ARRAY[
+                   CASE WHEN t.tgtype &  4 > 0 THEN 'INSERT'   END,
+                   CASE WHEN t.tgtype &  8 > 0 THEN 'DELETE'   END,
+                   CASE WHEN t.tgtype & 16 > 0 THEN 'UPDATE'   END,
+                   CASE WHEN t.tgtype & 32 > 0 THEN 'TRUNCATE' END
+               ]) AS e(e)
+               WHERE e IS NOT NULL) AS events,
+            pg_get_triggerdef(t.oid) AS action_statement
+        FROM pg_catalog.pg_trigger t
+        JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE NOT t.tgisinternal
+          AND n.nspname = p_schema
+        ORDER BY t.tgname, c.relname
     LOOP
         INSERT INTO guardops.shape_object (
             picture_id, schema_name, object_name, object_kind, column_shape
