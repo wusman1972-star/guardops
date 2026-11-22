@@ -1,0 +1,5 @@
+tools/oldlogs/
+tools/batbackups/
+tools/offdesk/_cr_check/
+*.log
+code_log*.txt
