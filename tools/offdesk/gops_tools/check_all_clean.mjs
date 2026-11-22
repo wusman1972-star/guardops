@@ -94,13 +94,17 @@ try {
 const changedSet = new Set(diffOut ? diffOut.split('\n').filter(Boolean) : []);
 
 // 2. Staged changes (index vs HEAD)
+const stagedSet = new Set();
 try {
   const staged = execFileSync(
     'git', ['diff', '--cached', '--name-only', '--', 'migrations/*.sql'],
     { cwd: repo }
   ).toString().trim();
-  if (staged) staged.split('\n').filter(Boolean).forEach(f => changedSet.add(f));
-} catch {}
+  if (staged) staged.split('\n').filter(Boolean).forEach(f => { changedSet.add(f); stagedSet.add(f); });
+} catch (e) {
+  process.stderr.write(`check_all_clean: staged scan failed: ${e.message}\n`);
+  process.exit(1);
+}
 
 // 3. Unstaged changes (working tree vs index)
 try {
@@ -109,7 +113,10 @@ try {
     { cwd: repo }
   ).toString().trim();
   if (unstaged) unstaged.split('\n').filter(Boolean).forEach(f => changedSet.add(f));
-} catch {}
+} catch (e) {
+  process.stderr.write(`check_all_clean: unstaged scan failed: ${e.message}\n`);
+  process.exit(1);
+}
 
 // 4. Untracked migration files
 try {
@@ -122,7 +129,10 @@ try {
       .filter(f => f && /^migrations\/\d+_[A-Za-z0-9_-]+\.sql$/.test(f))
       .forEach(f => changedSet.add(f));
   }
-} catch {}
+} catch (e) {
+  process.stderr.write(`check_all_clean: untracked scan failed: ${e.message}\n`);
+  process.exit(1);
+}
 
 const changedFiles = [...changedSet];
 
@@ -148,11 +158,21 @@ for (const rawFile of changedFiles) {
     continue;
   }
 
-  // Current blob SHA (working-tree content).
+  // Current blob SHA: use index entry for staged files, working-tree hash otherwise.
+  // Using the index blob for staged files ensures the gate validates the same content
+  // the commit will record, not a potentially different working-tree version.
   let fileSha;
   try {
-    fileSha = execFileSync('git', ['hash-object', rawFile], { cwd: repo })
-      .toString().trim();
+    if (stagedSet.has(rawFile)) {
+      const lsOut = execFileSync('git', ['ls-files', '-s', '--', rawFile], { cwd: repo })
+        .toString().trim();
+      const shaMatch = lsOut.match(/^\S+\s+(\S+)\s+\d+\t/);
+      if (!shaMatch) throw new Error('index entry not found');
+      fileSha = shaMatch[1];
+    } else {
+      fileSha = execFileSync('git', ['hash-object', rawFile], { cwd: repo })
+        .toString().trim();
+    }
   } catch {
     unreviewed.push(fileName + ' [file missing]');
     continue;

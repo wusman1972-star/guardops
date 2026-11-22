@@ -27,12 +27,12 @@ foreach ($t in $tableKeys) {
     $colsByTable[$t] = @($colsByTable[$t] | Sort-Object ordinal_position)
 }
 
-# Build trigger lookup: table_name -> list of trigger_def strings
+# Build trigger lookup: table_name -> list of {trigger_def, tgenabled, trigger_name}
 $trigsByTable = @{}
 foreach ($tr in $triggers) {
     $t = $tr.table_name
-    if (-not $trigsByTable.ContainsKey($t)) { $trigsByTable[$t] = [System.Collections.Generic.List[string]]::new() }
-    $trigsByTable[$t].Add($tr.trigger_def)
+    if (-not $trigsByTable.ContainsKey($t)) { $trigsByTable[$t] = [System.Collections.Generic.List[object]]::new() }
+    $trigsByTable[$t].Add([PSCustomObject]@{ trigger_def = $tr.trigger_def; tgenabled = $tr.tgenabled; trigger_name = $tr.trigger_name })
 }
 
 # Forward order (63 tables)
@@ -471,16 +471,13 @@ function Get-ConstraintSQL($tbl) {
     # Deduplicate by constraint_name for processing
     $seenConstraints = @{}
 
-    # Process PKs first
-    $pkConstraints = $tblConstraints | Where-Object { $_.constraint_type -eq 'PRIMARY KEY' } |
-        Select-Object -Property constraint_name, column_name -Unique
-    $pkDone = @{}
-    foreach ($c in $pkConstraints) {
-        $cn = $c.constraint_name
-        if ($pkDone.ContainsKey($cn)) { continue }
-        $pkDone[$cn] = $true
-        $col = $c.column_name
-        $result.Add("ALTER TABLE guardops.$tbl ADD CONSTRAINT $cn PRIMARY KEY ($col);")
+    # Process PKs first — group by constraint_name to handle composite PKs correctly
+    $pkGroups = $tblConstraints | Where-Object { $_.constraint_type -eq 'PRIMARY KEY' } | Group-Object constraint_name
+    foreach ($grp in $pkGroups) {
+        $cn = $grp.Name
+        $cols = @($grp.Group | Select-Object -ExpandProperty column_name)
+        $colList = $cols -join ', '
+        $result.Add("ALTER TABLE guardops.$tbl ADD CONSTRAINT $cn PRIMARY KEY ($colList);")
     }
 
     # Process FKs
@@ -581,7 +578,12 @@ foreach ($tbl in $forwardOrder) {
 
 $out.AppendLine('') | Out-Null
 $out.AppendLine('-- ===  ROLLBACK SECTION  ===') | Out-Null
+$out.AppendLine('-- Rollback restores table structure only. Rows present before the forward') | Out-Null
+$out.AppendLine('-- migration are not restored. All 63 tables are recreated without data.') | Out-Null
 $out.AppendLine('') | Out-Null
+
+# Collect all FK lines for the second pass (they need all tables + indexes to exist first)
+$allRollbackFKs = [System.Collections.Generic.List[string]]::new()
 
 foreach ($tbl in $rollbackOrder) {
     $out.AppendLine("-- ----- $tbl -----") | Out-Null
@@ -592,19 +594,32 @@ foreach ($tbl in $rollbackOrder) {
     $out.AppendLine($createSql) | Out-Null
     $out.AppendLine('') | Out-Null
 
-    # 2. Constraints (PK, FK, UNIQUE, CHECK)
+    # 2. Non-FK constraints (PK, UNIQUE, CHECK) — FKs deferred to second pass
     $constraintLines = Get-ConstraintSQL $tbl
+    $nonFkLines = [System.Collections.Generic.List[string]]::new()
     foreach ($line in $constraintLines) {
-        $out.AppendLine($line) | Out-Null
-    }
-    if ($constraintLines.Count -gt 0) { $out.AppendLine('') | Out-Null }
-
-    # 3. Non-PK indexes
-    if ($indexes.ContainsKey($tbl)) {
-        foreach ($idx in $indexes[$tbl]) {
-            $out.AppendLine($idx) | Out-Null
+        if ($line -match 'FOREIGN KEY') {
+            $allRollbackFKs.Add($line)
+        } else {
+            $nonFkLines.Add($line)
+            $out.AppendLine($line) | Out-Null
         }
-        $out.AppendLine('') | Out-Null
+    }
+    if ($nonFkLines.Count -gt 0) { $out.AppendLine('') | Out-Null }
+
+    # 3. Non-PK indexes — skip those whose name matches an emitted UNIQUE constraint
+    $emittedUniqNames = [System.Collections.Generic.HashSet[string]]::new()
+    foreach ($line in $nonFkLines) {
+        if ($line -match 'ADD CONSTRAINT (\S+) UNIQUE') { $emittedUniqNames.Add($Matches[1]) | Out-Null }
+    }
+    if ($indexes.ContainsKey($tbl)) {
+        $hasIdx = $false
+        foreach ($idx in $indexes[$tbl]) {
+            if ($idx -match 'CREATE UNIQUE INDEX (\S+)\s' -and $emittedUniqNames.Contains($Matches[1])) { continue }
+            $out.AppendLine($idx) | Out-Null
+            $hasIdx = $true
+        }
+        if ($hasIdx) { $out.AppendLine('') | Out-Null }
     }
 
     # 4. RLS enable
@@ -629,12 +644,26 @@ foreach ($tbl in $rollbackOrder) {
 
     # 7. Triggers
     if ($trigsByTable.ContainsKey($tbl)) {
-        foreach ($trigDef in $trigsByTable[$tbl]) {
-            $td = $trigDef.TrimEnd()
+        foreach ($trigInfo in $trigsByTable[$tbl]) {
+            $td = $trigInfo.trigger_def.TrimEnd()
             if (-not $td.EndsWith(';')) { $td += ';' }
             $out.AppendLine($td) | Out-Null
+            if ($trigInfo.tgenabled -eq 'A') {
+                $out.AppendLine("ALTER TABLE guardops.$tbl ENABLE ALWAYS TRIGGER $($trigInfo.trigger_name);") | Out-Null
+            }
         }
         $out.AppendLine('') | Out-Null
+    }
+}
+
+# FK PASS: add all foreign keys after all tables and their indexes exist
+if ($allRollbackFKs.Count -gt 0) {
+    $out.AppendLine('') | Out-Null
+    $out.AppendLine('-- ===  ROLLBACK FK PASS  ===') | Out-Null
+    $out.AppendLine('-- Foreign keys added after all tables and indexes exist.') | Out-Null
+    $out.AppendLine('') | Out-Null
+    foreach ($fk in $allRollbackFKs) {
+        $out.AppendLine($fk) | Out-Null
     }
 }
 

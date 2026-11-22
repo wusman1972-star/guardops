@@ -43,21 +43,30 @@ const lines  = readFileSync(crPath, 'utf8').trim().split('\n');
 const findingsPerFile = {};   // "migrations/0307_..." → { major, minor }
 let complete   = null;
 
+let parsedFindings = 0;
 for (const line of lines) {
   let obj;
   try { obj = JSON.parse(line); } catch { continue; }
   if (obj.type === 'finding') {
     const key = obj.fileName;   // e.g. "migrations/0307_open_work_cap.sql"
+    if (typeof key !== 'string' || typeof obj.severity !== 'string') continue;
     if (!findingsPerFile[key]) findingsPerFile[key] = { critical: 0, major: 0, minor: 0 };
-    if      (obj.severity === 'critical') findingsPerFile[key].critical++;
-    else if (obj.severity === 'major')    findingsPerFile[key].major++;
-    else if (obj.severity === 'minor')    findingsPerFile[key].minor++;
+    if      (obj.severity === 'critical') { findingsPerFile[key].critical++; parsedFindings++; }
+    else if (obj.severity === 'major')    { findingsPerFile[key].major++;    parsedFindings++; }
+    else if (obj.severity === 'minor')    { findingsPerFile[key].minor++;    parsedFindings++; }
   }
   if (obj.type === 'complete') { complete = obj; break; }
 }
 
 if (!complete) {
   process.stderr.write('store_cr_verdicts: no "complete" line in cr_last.txt\n');
+  process.exit(1);
+}
+
+if (typeof complete.findings === 'number' && parsedFindings !== complete.findings) {
+  process.stderr.write(
+    `store_cr_verdicts: expected ${complete.findings} findings but parsed ${parsedFindings} — review stream may be corrupt, refusing to write verdicts\n`
+  );
   process.exit(1);
 }
 
@@ -82,6 +91,13 @@ try {
   );
 }
 
+if (!reviewedHeadSha) {
+  process.stderr.write(
+    'store_cr_verdicts: reviewed revision unavailable — re-run the reviewer before storing verdicts\n'
+  );
+  process.exit(1);
+}
+
 // ── record each reviewed file ──────────────────────────────────────────────
 let recorded = 0;
 let skipped  = 0;
@@ -101,7 +117,7 @@ for (const rawFile of allChanged) {
       .toString().trim();
   } catch {
     process.stderr.write(`store_cr_verdicts: cannot hash ${rawFile} (missing?)\n`);
-    skipped++;
+    errors++;
     continue;
   }
 
@@ -115,7 +131,7 @@ for (const rawFile of allChanged) {
   } catch {
     headFileSha = null;
   }
-  if (headFileSha && workingTreeSha !== headFileSha) {
+  if (!headFileSha || workingTreeSha !== headFileSha) {
     process.stderr.write(
       `store_cr_verdicts: ${rawFile} has uncommitted changes — commit before running the review and verdict store\n`
     );

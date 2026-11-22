@@ -76,18 +76,33 @@ if (paramsArg !== undefined) {
   body.params = params;
 }
 
+const DEADLINE_MS = 30_000;
+const ac = new AbortController();
+const timer = setTimeout(() => ac.abort(), DEADLINE_MS);
+
 let res;
 try {
   res = await fetch(DOOR, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal: ac.signal,
   });
 } catch (e) {
+  clearTimeout(timer);
+  if (e.name === 'AbortError') fail('request deadline exceeded — outcome unknown');
   fail(`request failed: ${e.message}`);
 }
 
-const text = await res.text();
+let text;
+try {
+  text = await res.text();
+} catch (e) {
+  clearTimeout(timer);
+  if (e.name === 'AbortError') fail('response deadline exceeded — outcome unknown');
+  fail(`reading response failed: ${e.message}`);
+}
+clearTimeout(timer);
 let reply;
 try {
   reply = JSON.parse(text);
