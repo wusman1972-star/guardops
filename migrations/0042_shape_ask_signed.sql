@@ -73,7 +73,8 @@ begin
                                'graphql_public','supabase_migrations')
     $q$);
 
-  update guardops.shape_picture set request_id = v_req where id = v_picture;
+  -- board 11845: stamp the dispatching sign-in so signin_dead targets the right one.
+  update guardops.shape_picture set request_id = v_req, dispatched_signin_id = v_signin where id = v_picture;
   return v_picture;
 end
 $function$

@@ -13,10 +13,12 @@ declare
   v_spare    bigint;
   v_killed   boolean := false;
 begin
-  select id, database_id into v_pic from guardops.shape_picture where id = p_picture_id;
+  -- board 11845: read dispatched_signin_id so we act on the sign-in that sent the
+  -- request, not whatever is current when the response arrives.
+  select id, database_id, dispatched_signin_id into v_pic from guardops.shape_picture where id = p_picture_id;
   if not found then return false; end if;
 
-  v_signin := guardops.live_signin(v_pic.database_id);
+  v_signin := v_pic.dispatched_signin_id;
   select coalesce(nullif(btrim(label), ''), 'your database') into v_label
     from guardops.watched_database where id = v_pic.database_id;
 
