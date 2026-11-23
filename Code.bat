@@ -1,6 +1,7 @@
 @echo off
 title CODE
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0move_code_window.ps1" >nul 2>&1
+if not defined GOPS_REPO set "GOPS_REPO=%~dp0guardops-install"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\move_code_window.ps1" >nul 2>&1
 setlocal enabledelayedexpansion
 REM hole 782: the build folder is set ONCE here, never written into a step.
 if not defined GOPS_REPO set "GOPS_REPO=%~dp0guardops-install"
@@ -32,7 +33,7 @@ set "FLOOR_JOB=0"
 REM --- Capture Code.bat fingerprint to detect stale window ---
 for %%F in ("%~f0") do (set "SELF_SIZE=%%~zF" & set "SELF_TS=%%~tF")
 REM --- Release any CODE1 lock left over from a force-killed window before entering the loop ---
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_release.ps1" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
 :loop
 REM --- Stale-window check ---
 for %%F in ("%~f0") do (set "NOW_SIZE=%%~zF" & set "NOW_TS=%%~tF")
@@ -46,7 +47,7 @@ goto do_run
 :floor_check
 set "FLOOR_B="
 set "FLOOR_T="
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0floor_poll.ps1" -SkipIds "!FLOOR_SKIP!" -TmpPath "%~dp0floor_next.tmp" 2>>"%L%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\floor_poll.ps1" -SkipIds "!FLOOR_SKIP!" -TmpPath "%~dp0floor_next.tmp" 2>>"%L%"
 set "FLOOR_B="
 set "FLOOR_T="
 if exist "%~dp0floor_next.tmp" (
@@ -71,11 +72,11 @@ if "!X_BUILDER_KEY!"=="" (
     echo ===== ERROR: builder.key empty or missing - board !B! - line stopped %DATE% %TIME% ===== >> "%L%"
     set "REFUSAL_TITLE=builder.key missing before board !B! - line stopped"
     set "REFUSAL_DETAIL=X_BUILDER_KEY was empty when re-read inside the loop before board !B!. Line stopped."
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0file_refusal.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_refusal.ps1"
     goto wait_stopped
 )
 echo ===== KEY-REREAD board !B! X_BUILDER_KEY set ok %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_take.ps1" -BoardId "!B!" -LogPath "%L%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_take.ps1" -BoardId "!B!" -LogPath "%L%"
 if errorlevel 1 (
     echo Lock refused or transport error for board !B!. See code_log.txt. Waiting...
     goto wait
@@ -83,7 +84,7 @@ if errorlevel 1 (
 echo ===== LOCK TAKEN board !B! %DATE% %TIME% ===== >> "%L%"
 set "LAST=!B!"
 echo ===== START board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run_worker.ps1" -BoardId "!B!" -LogPath "%L%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\run_worker.ps1" -BoardId "!B!" -LogPath "%L%"
 set "CLAUDE_EXIT=!ERRORLEVEL!"
 set "WORKER_SIGNAL=NORESULT"
 if exist "%~dp0last_result.txt" (
@@ -106,7 +107,7 @@ if "!WORKER_OK!"=="0" (
     if "!FLOOR_JOB!"=="1" call :track_floor_fail
     timeout /t 60 /nobreak >nul
     echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_release.ps1" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
     goto loop
 )
 REM --- Hole 796: every job gets its OWN BRANCH off master before anything is committed.
@@ -114,17 +115,17 @@ REM Work was committed straight onto master, so CodeRabbit ran with currentBranc
 REM baseBranch=master and answered "No changes detected" on every job. The chain says each
 REM piece goes up as its own PR and CodeRabbit reviews that PR.
 echo ===== BRANCH board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0branch_checkout.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\branch_checkout.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 REM --- Pre-review commit: stage migrations/ and tools/, commit before CR sees dirty files ---
 echo ===== PRE-REVIEW COMMIT board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pre_review_commit.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\pre_review_commit.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 if errorlevel 1 (
     echo ===== PRE-REVIEW COMMIT FAILED board !B! %DATE% %TIME% - LINE STOPPED ===== >> "%L%"
     set "REFUSAL_TITLE=Pre-review commit failed board !B! - line stopped"
     set "REFUSAL_DETAIL=git commit of migrations/ and tools/ failed before CR review for board !B!. Line stopped to prevent review against a dirty tree."
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0file_refusal.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_refusal.ps1"
     echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_release.ps1" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
     goto wait_stopped
 )
 echo ===== CR REVIEW board !B! %DATE% %TIME% ===== >> "%L%"
@@ -158,9 +159,9 @@ if !CR_EXIT! neq 0 (
     set "CR_EXIT_ENV=!CR_EXIT!"
     set "REFUSAL_TITLE=CR REVIEW REFUSED board !B! - line stopped"
     set "REFUSAL_DETAIL=CodeRabbit review could not run for board !B!. The loop is stopped until the reviewer is fixed. CR exit code: !CR_EXIT_ENV!"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0file_refusal.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_refusal.ps1"
     echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_release.ps1" >nul 2>&1
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
     goto wait_stopped
 )
 REM --- Store per-file verdicts for files reviewed this run (board 4075) ---
@@ -172,7 +173,7 @@ REM no model call. Minor, trivial and nit hold nothing. The branch is still push
 REM work is lost; only the merge into master is held, and the line stops so the next job
 REM cannot build on top of it. This gate only READS - it never refuses a write anywhere.
 set "SEVSTOP="
-for /f "delims=" %%S in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0severity_gate.ps1"') do set "SEVSTOP=%%S"
+for /f "delims=" %%S in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\severity_gate.ps1"') do set "SEVSTOP=%%S"
 echo ===== SEVERITY GATE board !B! %DATE% %TIME% - critical/major count: !SEVSTOP! ===== >> "%L%"
 REM An unreadable gate must not brick the line. It waves the job through and SHOUTS, so the
 REM next window sees it at once instead of a silent pass. Three ways it can be unreadable:
@@ -200,12 +201,12 @@ if not "!SEVSTOP!"=="0" (
     echo.
 )
 echo ===== GIT PUSH board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0publish_branch.ps1" -LogPath "%L%" -BoardId "!B!" -RepoPath "%GOPS_REPO%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\publish_branch.ps1" -LogPath "%L%" -BoardId "!B!" -RepoPath "%GOPS_REPO%"
 echo ===== FETCH REAL MASTER board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fetch_master.ps1" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\fetch_master.ps1" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 echo ===== END board !B! %DATE% %TIME% ===== >> "%L%"
 echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_release.ps1" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
 echo.
 echo Job !B! finished. Waiting for the next one...
 goto loop
@@ -229,7 +230,7 @@ echo  STALE WINDOW: Code.bat has changed.
 echo  Releasing lock and relaunching fresh window.
 echo ***********************************************
 echo.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0lock_release.ps1" >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
 start "CODE" "%~dp0Code.bat"
 exit
 :wait_stopped
