@@ -1,0 +1,5 @@
+===== base e773a822d70988108f90f55ba1fddc5d3d438c84 ===== 
+===== scope migrations ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"master","baseBranch":"master","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations"}
+{"type":"status","phase":"setup","status":"review_skipped","message":"No changes detected"}
+{"type":"complete","status":"review_skipped","findings":0,"message":"No changes detected"}
