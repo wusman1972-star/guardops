@@ -77,4 +77,6 @@ begin
   update guardops.shape_picture set request_id = v_req, dispatched_signin_id = v_signin where id = v_picture;
   return v_picture;
 end
-$function$
+$function$;
+
+REVOKE EXECUTE ON FUNCTION guardops.shape_ask_signed(bigint, text) FROM PUBLIC;
