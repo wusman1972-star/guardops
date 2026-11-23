@@ -38,37 +38,82 @@ for %%B in (origin/master origin/main master main) do (
 )
 if not defined BASEREF set "BASEREF=HEAD~1"
 echo ===== base !BASEREF! ===== >> "%VF%"
-for /f "delims=" %%F in ('git diff --name-only !BASEREF!...HEAD 2^>nul') do (
-    for /f "tokens=1 delims=/" %%T in ("%%F") do (
-        if /i not "%%T"=="supabase" (
-            set "SKIP="
-            if /i "%%F"=="tools/cr_last.txt" set "SKIP=1"
-            if /i "%%F"=="tools/cr_done.flag" set "SKIP=1"
-            if /i "%%F"=="tools/cr_running.flag" set "SKIP=1"
-            if /i "%%F"=="tools/cr_reviewed_head.txt" set "SKIP=1"
-            echo %%F| findstr /i /b "tools/verdicts/" >nul 2>&1
-            if not errorlevel 1 set "SKIP=1"
-            if not defined SKIP echo %%T>> "%TEMP%\cr_scopes.tmp"
+git diff --name-only !BASEREF!...HEAD > "%TEMP%\cr_diff1.tmp" 2> "%TEMP%\cr_diff1_err.tmp"
+if errorlevel 1 (
+    echo ===== git diff failed: base !BASEREF! could not be resolved ===== >> "%VF%"
+    type "%TEMP%\cr_diff1_err.tmp" >> "%VF%"
+    del /q "%TEMP%\cr_diff1.tmp" "%TEMP%\cr_diff1_err.tmp" 2>nul
+    copy /y "%VF%" tools\cr_last.txt >nul 2>&1
+    del /q tools\cr_running.flag 2>nul
+    echo 1 > tools\cr_done.flag
+    exit /b 1
+)
+for /f "usebackq delims=" %%F in ("%TEMP%\cr_diff1.tmp") do (
+    set "FSKIP="
+    if /i "%%F"=="tools/cr_last.txt" set "FSKIP=reviewer state file"
+    if /i "%%F"=="tools/cr_done.flag" set "FSKIP=reviewer state file"
+    if /i "%%F"=="tools/cr_running.flag" set "FSKIP=reviewer state file"
+    if /i "%%F"=="tools/cr_reviewed_head.txt" set "FSKIP=reviewer state file"
+    echo %%F| findstr /i /b "tools/verdicts/" >nul 2>&1
+    if not errorlevel 1 set "FSKIP=reviewer state file"
+    echo %%F| findstr /i /b "supabase/schemas/" >nul 2>&1
+    if not errorlevel 1 set "FSKIP=supabase/schemas is generated - skipped by design (board 4297)"
+    if defined FSKIP (
+        echo SKIPPED [!FSKIP!]: %%F>> "%VF%"
+    ) else (
+        echo %%F| findstr /c:"/" >nul 2>&1
+        if errorlevel 1 (
+            echo .>> "%TEMP%\cr_scopes.tmp"
+        ) else (
+            for /f "tokens=1 delims=/" %%T in ("%%F") do (
+                if /i "%%T"=="supabase" (
+                    for /f "tokens=1,2 delims=/" %%A in ("%%F") do (
+                        if "%%B"=="" (
+                            echo %%A>> "%TEMP%\cr_scopes.tmp"
+                        ) else if exist "%%A\%%B\" (
+                            echo %%A/%%B>> "%TEMP%\cr_scopes.tmp"
+                        ) else (
+                            echo %%A>> "%TEMP%\cr_scopes.tmp"
+                        )
+                    )
+                ) else (
+                    echo %%T>> "%TEMP%\cr_scopes.tmp"
+                )
+            )
         )
     )
 )
+del /q "%TEMP%\cr_diff1.tmp" "%TEMP%\cr_diff1_err.tmp" 2>nul
 REM --- Hole 798: the review step was the one step with no proof on it. Work out here
 REM whether this job actually changed a migrations file, so a review that read nothing
 REM can be told apart from a job that genuinely had nothing to read.
 set "MIGCHANGE="
-for /f "delims=" %%F in ('git diff --name-only !BASEREF!...HEAD 2^>nul') do (
+git diff --name-only !BASEREF!...HEAD > "%TEMP%\cr_diff2.tmp" 2> "%TEMP%\cr_diff2_err.tmp"
+if errorlevel 1 (
+    echo ===== git diff failed: base !BASEREF! could not be resolved ===== >> "%VF%"
+    type "%TEMP%\cr_diff2_err.tmp" >> "%VF%"
+    del /q "%TEMP%\cr_diff2.tmp" "%TEMP%\cr_diff2_err.tmp" 2>nul
+    copy /y "%VF%" tools\cr_last.txt >nul 2>&1
+    del /q tools\cr_running.flag 2>nul
+    echo 1 > tools\cr_done.flag
+    exit /b 1
+)
+for /f "usebackq delims=" %%F in ("%TEMP%\cr_diff2.tmp") do (
     echo %%F| findstr /i /b "migrations/" >nul 2>&1
     if not errorlevel 1 set "MIGCHANGE=1"
 )
+del /q "%TEMP%\cr_diff2.tmp" "%TEMP%\cr_diff2_err.tmp" 2>nul
 set "DIDONE="
 if exist "%TEMP%\cr_scopes.tmp" (
     for /f "delims=" %%T in ('sort /unique "%TEMP%\cr_scopes.tmp" 2^>nul ^|^| sort "%TEMP%\cr_scopes.tmp"') do (
-        if exist "%%T\" (
-            echo !DIDONE! | findstr /c:"[%%T]" >nul || (
-                set "DIDONE=!DIDONE![%%T]"
-                echo ===== scope %%T ===== >> "%VF%"
+        echo !DIDONE! | findstr /c:"[%%T]" >nul || (
+            set "DIDONE=!DIDONE![%%T]"
+            echo ===== scope %%T ===== >> "%VF%"
+            if exist "%%T\" (
                 coderabbit review --agent --dir %%T >> "%VF%" 2>&1
                 if errorlevel 1 set "RC=1"
+            ) else (
+                echo DROPPED [scope is not a directory - not reviewed]: %%T>> "%VF%"
             )
         )
     )
