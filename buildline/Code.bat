@@ -126,6 +126,22 @@ if errorlevel 1 (
 echo ===== CR REVIEW board !B! %DATE% %TIME% ===== >> "%L%"
 call "%~dp0cr_review.bat" "!B!"
 set "CR_EXIT=!ERRORLEVEL!"
+set "CR_RETRIES=0"
+:cr_allowance_wait
+if !CR_EXIT! equ 2 (
+    if !CR_RETRIES! lss 5 (
+        set /a CR_RETRIES+=1
+        echo ===== CR ALLOWANCE SPENT board !B! retry !CR_RETRIES!/5 waiting 300s %DATE% %TIME% ===== >> "%L%"
+        echo.
+        echo  CR allowance spent for board !B! ^(exit 2^) - retry !CR_RETRIES!/5 - waiting 5 min...
+        echo.
+        timeout /t 300 /nobreak >nul
+        echo ===== CR REVIEW RETRY !CR_RETRIES! board !B! %DATE% %TIME% ===== >> "%L%"
+        call "%~dp0cr_review.bat" "!B!"
+        set "CR_EXIT=!ERRORLEVEL!"
+        goto cr_allowance_wait
+    )
+)
 if !CR_EXIT! neq 0 (
     echo ===== CR REVIEW REFUSED board !B! %DATE% %TIME% - LINE STOPPED ===== >> "%L%"
     echo.
