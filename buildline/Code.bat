@@ -81,8 +81,32 @@ if errorlevel 1 (
 echo ===== LOCK TAKEN board !B! %DATE% %TIME% ===== >> "%L%"
 set "LAST=!B!"
 echo ===== START board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$lp='%L%'; $fs=New-Object System.IO.FileStream($lp,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite); $sw=New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8); $sw.AutoFlush=$true; try { claude -p 'read board !B! and do it' --verbose --output-format stream-json 2>&1 | ForEach-Object { $t=(Get-Date).ToString('HH:mm:ss'); $line=$_; if($line.Length -gt 220){$line=$line.Substring(0,220)}; $out=\"$t  $line\"; Write-Host $out; $sw.WriteLine($out) } } finally { $sw.Close(); $fs.Dispose() }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$lp='%L%'; $rp=[System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($lp),'last_result.txt'); Remove-Item -LiteralPath $rp -ErrorAction SilentlyContinue; $fs=New-Object System.IO.FileStream($lp,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite); $sw=New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8); $sw.AutoFlush=$true; $workerExit=0; $lastResult=$null; try { claude -p 'read board !B! and do it' --verbose --output-format stream-json 2>&1 | ForEach-Object { $t=(Get-Date).ToString('HH:mm:ss'); $raw=$_; try { $j=$raw | ConvertFrom-Json -ErrorAction Stop; if ($j.type -eq 'result') { $lastResult=$j } } catch {}; $line=$raw; if($line.Length -gt 220){$line=$line.Substring(0,220)}; $out=\"$t  $line\"; Write-Host $out; $sw.WriteLine($out) }; $workerExit=$LASTEXITCODE } finally { $sw.Close(); $fs.Dispose() }; if ($lastResult) { if ($lastResult.is_error -eq $false -or $lastResult.subtype -eq 'success') { [System.IO.File]::WriteAllText($rp,'SUCCESS') } else { [System.IO.File]::WriteAllText($rp,'FAIL') } }; exit $workerExit"
 set "CLAUDE_EXIT=!ERRORLEVEL!"
+set "WORKER_SIGNAL=NORESULT"
+if exist "%~dp0last_result.txt" (
+    for /f "usebackq delims=" %%R in ("%~dp0last_result.txt") do set "WORKER_SIGNAL=%%R"
+)
+echo ===== WORKER EXIT !CLAUDE_EXIT! signal !WORKER_SIGNAL! board !B! %DATE% %TIME% ===== >> "%L%"
+set "WORKER_OK=0"
+if "!WORKER_SIGNAL!"=="SUCCESS" set "WORKER_OK=1"
+if "!WORKER_SIGNAL!"=="NORESULT" (
+    if !CLAUDE_EXIT! equ 0 set "WORKER_OK=1"
+)
+if "!WORKER_OK!"=="0" (
+    echo ===== WORKER FAILED board !B! %DATE% %TIME% - exit !CLAUDE_EXIT! signal !WORKER_SIGNAL! - nothing published ===== >> "%L%"
+    echo.
+    echo ***********************************************
+    echo  JOB !B! WORKER FAILED ^(exit !CLAUDE_EXIT! signal !WORKER_SIGNAL!^)
+    echo  Work left on local branch. Nothing published.
+    echo ***********************************************
+    echo.
+    if "!FLOOR_JOB!"=="1" call :track_floor_fail
+    timeout /t 60 /nobreak >nul
+    echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $url=$env:LOCK_DB_URL; try { & 'C:\Users\T480\scoop\apps\postgresql\current\bin\psql.exe' $url -t -A -c 'SELECT public.gops_release_driver_lock(''CODE1'')' | Out-Null } catch {} }" >nul 2>&1
+    goto loop
+)
 REM --- Hole 796: every job gets its OWN BRANCH off master before anything is committed.
 REM Work was committed straight onto master, so CodeRabbit ran with currentBranch=master and
 REM baseBranch=master and answered "No changes detected" on every job. The chain says each
@@ -154,23 +178,9 @@ if not "!SEVSTOP!"=="0" (
     echo.
 )
 echo ===== GIT PUSH board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $lp='%L%'; $bd=$env:BOARD_ID; Set-Location '%GOPS_REPO%'; $br='board-'+$bd; $out = git push origin HEAD 2>&1; $out | ForEach-Object { Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8; Write-Host $_ }; $out = git checkout master 2>&1; $out | ForEach-Object { Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8; Write-Host $_ }; $out = git merge --ff-only $br 2>&1; $out | ForEach-Object { Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8; Write-Host $_ }; if ($LASTEXITCODE -ne 0) { Add-Content -LiteralPath $lp -Value ('MERGE TO MASTER FAILED for '+$br+' - branch left unmerged') -Encoding UTF8 } else { $out = git push origin master 2>&1; $out | ForEach-Object { Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8; Write-Host $_ }; Add-Content -LiteralPath $lp -Value ('MERGED AND PUSHED: '+$br+' -> master') -Encoding UTF8 } }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $lp='%L%'; $bd=$env:BOARD_ID; Set-Location '%GOPS_REPO%'; $br='board-'+$bd; $out=git push origin HEAD 2>&1; $out|ForEach-Object{Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8;Write-Host $_}; if($LASTEXITCODE -ne 0){Add-Content -LiteralPath $lp -Value ('BRANCH PUSH FAILED for '+$br+' - branch not landed') -Encoding UTF8;return}; $out=git checkout master 2>&1; $out|ForEach-Object{Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8;Write-Host $_}; if($LASTEXITCODE -ne 0){Add-Content -LiteralPath $lp -Value ('CHECKOUT MASTER FAILED for '+$br+' - branch not landed') -Encoding UTF8;return}; $out=git merge --ff-only $br 2>&1; $out|ForEach-Object{Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8;Write-Host $_}; if($LASTEXITCODE -ne 0){Add-Content -LiteralPath $lp -Value ('MERGE TO MASTER FAILED for '+$br+' - branch left unmerged') -Encoding UTF8;return}; $out=git push origin master 2>&1; $out|ForEach-Object{Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8;Write-Host $_}; if($LASTEXITCODE -ne 0){Add-Content -LiteralPath $lp -Value ('MASTER PUSH FAILED for '+$br+' - merged locally not pushed') -Encoding UTF8;return}; Add-Content -LiteralPath $lp -Value ('MERGED AND PUSHED: '+$br+' -> master') -Encoding UTF8 }"
 echo ===== FETCH REAL MASTER board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $lp='%L%'; Set-Location '%GOPS_REPO%'; $out = git fetch origin master:refs/remotes/origin-real-master 2>&1; $out | ForEach-Object { Add-Content -LiteralPath $lp -Value $_ -Encoding UTF8; Write-Host $_ } }"
-if !CLAUDE_EXIT! neq 0 (
-    echo ===== FAILED board !B! %DATE% %TIME% ===== >> "%L%"
-    echo.
-    echo ***********************************************
-    echo  JOB !B! DID NOT FINISH PROPERLY
-    echo  Retrying poll in 60 seconds...
-    echo ***********************************************
-    echo.
-    if "!FLOOR_JOB!"=="1" call :track_floor_fail
-    timeout /t 60 /nobreak >nul
-    echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
-    powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $url=$env:LOCK_DB_URL; try { & 'C:\Users\T480\scoop\apps\postgresql\current\bin\psql.exe' $url -t -A -c 'SELECT public.gops_release_driver_lock(''CODE1'')' | Out-Null } catch {} }" >nul 2>&1
-    goto loop
-)
 echo ===== END board !B! %DATE% %TIME% ===== >> "%L%"
 echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "& { $url=$env:LOCK_DB_URL; try { & 'C:\Users\T480\scoop\apps\postgresql\current\bin\psql.exe' $url -t -A -c 'SELECT public.gops_release_driver_lock(''CODE1'')' | Out-Null } catch {} }" >nul 2>&1
