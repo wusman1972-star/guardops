@@ -1,0 +1,7 @@
+===== base 1783968e99abf8a2952ee5149bdbc8ef5aa608fd ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11857_20261123_200934.txt
+===== scope migrations ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11860","baseBranch":"master","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations"}
+{"type":"status","phase":"setup","status":"review_skipped","message":"No changes detected"}
+{"type":"complete","status":"review_skipped","findings":0,"message":"No changes detected"}
+===== REVIEW PROOF FAILED: reviewer ran but read no diff on a job that changed a migrations file ===== 
