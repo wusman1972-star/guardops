@@ -1,0 +1,7 @@
+===== base 532c96127475520f64b93b7ec954deabdfbc8134 ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11831_20261123_181438.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11831_20261123_181944.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11831_20261123_182448.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11831_20261123_182952.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11831_20261123_183459.txt
+===== no reviewable change, reviewer skipped ===== 
