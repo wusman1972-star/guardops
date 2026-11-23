@@ -16,7 +16,7 @@ del /q tools\cr_done.flag 2>nul
 echo running > tools\cr_running.flag
 set "PREVHEAD="
 if exist tools\cr_reviewed_head.txt for /f "usebackq tokens=1" %%P in ("tools\cr_reviewed_head.txt") do set "PREVHEAD=%%P"
-for /f "tokens=*" %%H in ('git rev-parse HEAD 2^>nul') do echo %%H > tools\cr_reviewed_head.txt
+for /f "tokens=*" %%H in ('git rev-parse HEAD 2^>nul') do set "CURHEAD=%%H"
 REM board 4305: the whole-branch review refuses when the branch carries more files than the
 REM reviewer accepts (1,965 vs a 300 cap while the schema export is unmerged). Review the
 REM scopes that fit, one after the other, and never supabase/schemas, which is generated
@@ -109,6 +109,7 @@ if defined MIGCHANGE (
 )
 findstr /r /c:"errorType.*rate_limit" /c:"Review limit reached" "%VF%" >nul 2>&1
 if not errorlevel 1 set "RC=2"
+if "%RC%"=="0" if defined DIDONE if defined CURHEAD echo !CURHEAD!> tools\cr_reviewed_head.txt
 copy /y "%VF%" tools\cr_last.txt >nul 2>&1
 del /q tools\cr_running.flag 2>nul
 echo %RC% > tools\cr_done.flag
