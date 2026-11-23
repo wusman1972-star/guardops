@@ -1,0 +1,5 @@
+===== proof: forced bad base BOGUS_11767_PROOF ===== 
+===== git diff failed: base BOGUS_11767_PROOF could not be resolved ===== 
+fatal: ambiguous argument 'BOGUS_11767_PROOF...HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
