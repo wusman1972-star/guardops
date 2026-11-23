@@ -81,7 +81,7 @@ if errorlevel 1 (
 echo ===== LOCK TAKEN board !B! %DATE% %TIME% ===== >> "%L%"
 set "LAST=!B!"
 echo ===== START board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$lp='%L%'; $rp=[System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($lp),'last_result.txt'); Remove-Item -LiteralPath $rp -ErrorAction SilentlyContinue; $fs=New-Object System.IO.FileStream($lp,[System.IO.FileMode]::Append,[System.IO.FileAccess]::Write,[System.IO.FileShare]::ReadWrite); $sw=New-Object System.IO.StreamWriter($fs,[System.Text.Encoding]::UTF8); $sw.AutoFlush=$true; $workerExit=0; $lastResult=$null; try { claude -p 'read board !B! and do it' --verbose --output-format stream-json 2>&1 | ForEach-Object { $t=(Get-Date).ToString('HH:mm:ss'); $raw=$_; try { $j=$raw | ConvertFrom-Json -ErrorAction Stop; if ($j.type -eq 'result') { $lastResult=$j } } catch {}; $line=$raw; if($line.Length -gt 220){$line=$line.Substring(0,220)}; $out=\"$t  $line\"; Write-Host $out; $sw.WriteLine($out) }; $workerExit=$LASTEXITCODE } finally { $sw.Close(); $fs.Dispose() }; if ($lastResult) { if ($lastResult.is_error -eq $false -or $lastResult.subtype -eq 'success') { [System.IO.File]::WriteAllText($rp,'SUCCESS') } else { [System.IO.File]::WriteAllText($rp,'FAIL') } }; exit $workerExit"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0run_worker.ps1" -BoardId "!B!" -LogPath "%L%"
 set "CLAUDE_EXIT=!ERRORLEVEL!"
 set "WORKER_SIGNAL=NORESULT"
 if exist "%~dp0last_result.txt" (
