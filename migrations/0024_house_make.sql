@@ -6,6 +6,7 @@ CREATE OR REPLACE FUNCTION guardops.house_make(p_name text, p_login text, p_exte
 AS $function$
 declare
   v_name     text := btrim(coalesce(p_name, ''));
+  v_login    text := btrim(coalesce(p_login, ''));
   v_ext      text := btrim(coalesce(p_external_id, ''));
   v_account  bigint;
   v_customer bigint;
@@ -13,13 +14,23 @@ begin
   if v_name = '' then
     raise exception '[HOUSE DOOR] a house needs a name';
   end if;
+  if v_login = '' then
+    raise exception '[HOUSE DOOR] a house needs a login role';
+  end if;
   if v_ext = '' then
     raise exception '[HOUSE DOOR] a house needs the provider id its customer is filed under';
+  end if;
+  if not exists (select 1 from pg_catalog.pg_roles r where r.rolname = v_login and r.rolcanlogin) then
+    raise exception '[HOUSE DOOR] % is not a login role on this floor - make its sealed login first (ORDER 117 S3)', v_login;
   end if;
 
   -- 1. mint the house row itself (nothing else makes an account row; account 1 was
   --    seeded, never born through a door).
   insert into guardops.account (name) values (v_name) returning id into v_account;
+
+  -- 2. its seat, through the door that already exists. The floor's own account may
+  --    seat a login into any account (ORDER 106); the migration runs as that account.
+  perform guardops.account_seat_set(v_login, v_account);
 
   -- 3. its customer, through the door that already exists (now reachable - board 1695
   --    fault 1 grant above). gops_customer_for_signin runs as its postgres owner, makes
