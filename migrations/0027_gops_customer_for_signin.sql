@@ -29,12 +29,10 @@ begin
    limit 1;
 
   -- ORDER 0140 F1: a finished sign-in retires the ones before it, by id.
+  -- A retirement failure aborts the sign-in - do not return success while earlier
+  -- sign-ins remain usable.
   if v_new is not null then
-    begin
-      perform guardops.signin_retire_others(v_new);
-    exception when others then
-      raise warning '[ONE SIGN-IN] could not retire the earlier sign-ins behind %: %', v_new, left(sqlerrm, 200);
-    end;
+    perform guardops.signin_retire_others(v_new);
   end if;
 
   return v_customer;
