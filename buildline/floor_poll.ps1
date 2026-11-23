@@ -3,12 +3,7 @@ param(
     [string]$TmpPath
 )
 $url = $env:LOCK_DB_URL
-$skipClause = ''
-if ($SkipIds -and $SkipIds.Trim() -ne '') {
-    $ids = ($SkipIds -split ',') | Where-Object { $_ -match '^\d+$' }
-    if ($ids) { $skipClause = ' AND id NOT IN (' + ($ids -join ',') + ')' }
-}
-$q = "SELECT id, title FROM guardops.board_item WHERE status='OPEN' AND turn='CODE' AND priority=1 AND created_at >= NOW() - INTERVAL '7 days' AND (plan_board_id IS NULL OR plan_board_id NOT IN (SELECT id FROM guardops.board_item WHERE status IN ('DONE','FINISHED','KILLED')))$skipClause ORDER BY created_at DESC LIMIT 1"
+$q = "SELECT id, title FROM guardops.take_next_job('CODE', 'CODE')"
 try {
     $raw = & 'C:\Users\T480\scoop\apps\postgresql\current\bin\psql.exe' $url -t -A -F '|' -c $q 2>&1
     if ($LASTEXITCODE -eq 0) {
