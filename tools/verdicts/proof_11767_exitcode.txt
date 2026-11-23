@@ -1,0 +1,13 @@
+﻿===== proof: bad base exit code =====
+git : fatal: ambiguous argument 'BOGUS_11767_PROOF...HEAD': unknown revision or path not in the working tree.
+At line:6 char:1
++ git -C $repo diff --name-only "BOGUS_11767_PROOF...HEAD" 2>&1 | Out-F ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (fatal: ambiguou...e working tree.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+exit code from bad base: 128
+===== proof: empty diff exit code =====
+exit code from empty diff: 0
