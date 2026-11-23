@@ -1,0 +1,7 @@
+===== base 6c29e5e9aa7fb523e989310e938ca167ad0824b1 ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11762_20261123_132333.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11767_20261123_133021.txt
+===== scope buildline ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11767","baseBranch":"master","workingDirectory":"C:/Users/T480/Desktop/guardops-install/buildline"}
+{"type":"status","phase":"setup","status":"review_skipped","message":"No changes detected"}
+{"type":"complete","status":"review_skipped","findings":0,"message":"No changes detected"}
