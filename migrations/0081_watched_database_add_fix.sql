@@ -17,6 +17,8 @@
 --   the owner fix is applied. The act_as_house call is guarded: it is skipped
 --   when the function does not yet exist, so the proof is safe on any install.
 
+DROP FUNCTION IF EXISTS guardops.watched_database_add(text);
+
 CREATE OR REPLACE FUNCTION guardops.watched_database_add(
   p_label        text,
   p_project_ref  text    DEFAULT NULL,
@@ -48,6 +50,7 @@ END;
 $function$;
 
 REVOKE EXECUTE ON FUNCTION guardops.watched_database_add(text, text, text, boolean, text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION guardops.watched_database_add(text, text, text, boolean, text) TO service_role;
 
 -- ── rolled-back proof ────────────────────────────────────────────────────────
 -- Sets up account + customer + connected_account, signs in if act_as_house
