@@ -1,0 +1,7 @@
+===== base ca174f70634103d39f3c4c425ebbe18101c0f7a4 (ca174f70634103d39f3c4c425ebbe18101c0f7a4) ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11898_20261124_132052.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11898_20261124_132740.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11913_20261124_131726.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11925_20261124_132425.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11926_20261124_133241.txt
+===== no reviewable change, reviewer skipped ===== 
