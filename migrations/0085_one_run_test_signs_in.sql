@@ -1,20 +1,8 @@
--- migrations/0084_one_run_test_proof.sql
--- Board 11978. Extends one_run_test to assert proof text on ADDED, DELETED,
--- and DELIVERED verdict lines.
---
--- The four existing count assertions are kept identical (same step/what/got/want/pass).
--- Four new assertions are added:
---   added_proof         ADDED proof text is not null and not "no shape record"
---   deleted_proof       DELETED proof text is not null and not "no shape record"
---   delivered_proof_scoped  commit BEFORE job.opened_at is NOT cited (board 11976 fix)
---   delivered_proof_cites   commit INSIDE the window IS cited
---
--- Setup added inside the rolled-back subtransaction:
---   - shape_change rows for APPEARED/GONE so job_verdict finds real proof text
---   - repo_link + repo_pull (direct inserts, no door needed; both roll back)
---   - job.repo_link_id wired to the test link so job_verdict can find commits
---   - two commit_seen rows: one before the window, one inside it
---   - commit_object row for the in-window commit (needed for the sha->file proof)
+-- migrations/0085_one_run_test_signs_in.sql
+-- Board 11982. Gives one_run_test its own identity so current_account() does not
+-- raise. Creates a temporary account/customer/connected_account, calls
+-- act_as_house, then carries on exactly as 0084 did. The whole subtransaction
+-- still rolls back, so no trace is left.
 
 CREATE OR REPLACE FUNCTION guardops.one_run_test()
   RETURNS TABLE(step integer, what text, got text, want text, pass boolean)
@@ -23,6 +11,8 @@ CREATE OR REPLACE FUNCTION guardops.one_run_test()
   SET search_path TO 'guardops', 'pg_catalog', 'pg_temp'
 AS $function$
 DECLARE
+  v_acct_id        bigint;
+  v_cust_id        bigint;
   v_db_id          bigint;
   v_link_id        bigint;
   v_pull_id        bigint;
@@ -42,6 +32,15 @@ DECLARE
   v_deliv_proof    text;
 BEGIN
   BEGIN
+
+    INSERT INTO guardops.account (name)
+      VALUES ('one_run_test') RETURNING id INTO v_acct_id;
+    INSERT INTO guardops.customer (account_id, external_id)
+      VALUES (v_acct_id, 'one_run_test') RETURNING id INTO v_cust_id;
+    INSERT INTO guardops.connected_account
+      (account_id, customer_id, token_secret_name, status)
+      VALUES (v_acct_id, v_cust_id, 'one_run_test-tok', 'ACTIVE');
+    PERFORM guardops.act_as_house(v_cust_id);
 
     -- Step 1: register a database to watch
     IF NOT EXISTS (
