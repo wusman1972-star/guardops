@@ -1,0 +1,15 @@
+===== base 55c1f2e7beae8f1e1b25014804d0407721f593c9 (55c1f2e7beae8f1e1b25014804d0407721f593c9) ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11883_20261124_105457.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11887_20261124_115807.txt
+===== scope migrations ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11898","baseBranch":"master","baseCommit":"55c1f2e7beae8f1e1b25014804d0407721f593c9","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["migrations/0070_who_is_calling.sql","migrations/0071_who_is_calling.sql"],"outcome":"completed","message":"Review completed"}
+===== scope tools ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11898","baseBranch":"master","baseCommit":"55c1f2e7beae8f1e1b25014804d0407721f593c9","workingDirectory":"C:/Users/T480/Desktop/guardops-install/tools","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["tools/cr_reviewed_head.txt.was_11876","tools/verdicts/cr_verdict_11883_20261124_105457.txt","tools/verdicts/cr_verdict_11887_20261124_115807.txt"],"outcome":"completed","message":"Review completed"}
