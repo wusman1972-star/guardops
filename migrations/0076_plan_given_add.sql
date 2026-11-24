@@ -28,7 +28,8 @@ DECLARE
   v_digest       text;
   v_ids          bigint[] := ARRAY[]::bigint[];
   v_id           bigint;
-  v_i            integer;
+  v_item         text;
+  v_pos          integer := 0;
 BEGIN
   -- Verify ownership and serialise concurrent filings for the same job.
   -- FOR UPDATE: two callers for the same job queue here; the second reads
@@ -57,11 +58,14 @@ BEGIN
     'hex'
   );
 
-  FOR v_i IN 1 .. array_length(p_items, 1) LOOP
+  -- FOREACH visits every element regardless of the array's lower bound;
+  -- v_pos is a separate one-based counter so position is always correct.
+  FOREACH v_item IN ARRAY p_items LOOP
+    v_pos := v_pos + 1;
     INSERT INTO guardops.plan_given
       (account_id, item_text, position, plan_version, plan_digest, job_id)
     VALUES
-      (guardops.current_account(), p_items[v_i], v_i, v_next_version, v_digest, p_job_id)
+      (guardops.current_account(), v_item, v_pos, v_next_version, v_digest, p_job_id)
     RETURNING id INTO v_id;
     v_ids := v_ids || v_id;
   END LOOP;
@@ -153,10 +157,11 @@ BEGIN
       END IF;
   END;
 
-  -- verify no plan_given rows survive the rollback
+  -- verify no plan_given rows survive the rollback; scope to the proof job
+  -- so unrelated application rows do not trip this assert.
   SELECT count(*) INTO v_count
     FROM guardops.plan_given
-   WHERE item_text IN ('step one', 'step two', 'step three', 'step two revised');
+   WHERE job_id = v_job_id;
   ASSERT v_count = 0,
     'plan_given must be empty after rollback, found ' || v_count || ' row(s)';
 

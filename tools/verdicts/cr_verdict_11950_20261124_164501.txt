@@ -1,0 +1,36 @@
+===== base 64cad2ca8f5c197e68a3528810d3a0717b26b7da (64cad2ca8f5c197e68a3528810d3a0717b26b7da) ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11948_20261124_163207.txt
+===== scope migrations ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11950","baseBranch":"master","baseCommit":"64cad2ca8f5c197e68a3528810d3a0717b26b7da","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
+Error while flushing PostHog PostHogFetchNetworkError: Network error while fetching PostHog
+      at <anonymous> (B:/~BUN/root/coderabbit:837:29534)
+      at async kqe (B:/~BUN/root/coderabbit:837:16253)
+      at async fetchWithRetry (B:/~BUN/root/coderabbit:837:29379)
+      at async _flush (B:/~BUN/root/coderabbit:837:28830)
+
+TypeError: getaddrinfo ENOTFOUND us.i.posthog.com
+     path: "https://us.i.posthog.com/batch/",
+  syscall: "getaddrinfo",
+ hostname: "us.i.posthog.com",
+    errno: 4,
+     code: "ENOTFOUND"
+
+      at async <anonymous> (B:/~BUN/root/coderabbit:837:29492)
+      at async kqe (B:/~BUN/root/coderabbit:837:16253)
+      at async fetchWithRetry (B:/~BUN/root/coderabbit:837:29379)
+      at async _flush (B:/~BUN/root/coderabbit:837:28830)
+
+TypeError: getaddrinfo ENOTFOUND us.i.posthog.com
+     path: "https://us.i.posthog.com/batch/",
+  syscall: "getaddrinfo",
+ hostname: "us.i.posthog.com",
+    errno: 4,
+     code: "ENOTFOUND"
+
+      at async <anonymous> (B:/~BUN/root/coderabbit:837:29492)
+      at async kqe (B:/~BUN/root/coderabbit:837:16253)
+      at async fetchWithRetry (B:/~BUN/root/coderabbit:837:29379)
+      at async _flush (B:/~BUN/root/coderabbit:837:28830)
+
+{"type":"error","errorType":"connection","message":"Connection failed: WebSocket closed","recoverable":true,"details":{"cause":{"name":"TRPCWebSocketClosedError"},"name":"TRPCClientError"}}
+Error: An unexpected error occurred.
