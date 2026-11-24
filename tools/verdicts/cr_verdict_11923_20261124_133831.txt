@@ -1,0 +1,13 @@
+===== base ca174f70634103d39f3c4c425ebbe18101c0f7a4 (ca174f70634103d39f3c4c425ebbe18101c0f7a4) ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11898_20261124_132052.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11898_20261124_132740.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11898_20261124_133409.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11913_20261124_131726.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11925_20261124_132425.txt
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11926_20261124_133241.txt
+===== scope migrations ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11923","baseBranch":"master","baseCommit":"ca174f70634103d39f3c4c425ebbe18101c0f7a4","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["migrations/0072_one_run_test.sql"],"outcome":"completed","message":"Review completed"}
