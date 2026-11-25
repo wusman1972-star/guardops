@@ -1,0 +1,12 @@
+===== base 12dbceef5991a746dc08057ff659dbdd72d6a52e (12dbceef5991a746dc08057ff659dbdd72d6a52e) ===== 
+===== SIZE GATE: 453 lines changed (limit 120) =====
+===== SIZE GATE STOP: 453 lines changed, limit is 120. Files touched (1):
+  migrations/0089_job_start_finish_shape_wiring.sql =====
+git push: To https://github.com/wusman1972-star/guardops.git
+git push:  ! [rejected]        board-12015 -> board-12015 (non-fast-forward)
+git push: error: failed to push some refs to 'https://github.com/wusman1972-star/guardops.git'
+git push: hint: Updates were rejected because the tip of your current branch is behind
+git push: hint: its remote counterpart. If you want to integrate the remote changes,
+git push: hint: use 'git pull' before pushing again.
+git push: hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+===== SIZE HOLD BOARD filed as board 12019 =====
