@@ -113,12 +113,7 @@ BEGIN
           FROM pg_catalog.pg_class c
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
          WHERE c.relkind IN ('r','p','v','m')
-           AND n.nspname NOT IN (
-               'pg_catalog','information_schema','pg_toast',
-               'cron','net','extensions','vault','pgsodium',
-               'auth','storage','realtime','graphql','graphql_public',
-               'supabase_migrations')
-           AND n.nspname NOT LIKE 'pg_%'
+           AND n.nspname = p_schema
         UNION ALL
         SELECT v_picture_id,
                n.nspname::text,
@@ -133,12 +128,7 @@ BEGIN
                0::bigint
           FROM pg_catalog.pg_proc p
           JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname NOT IN (
-               'pg_catalog','information_schema','pg_toast',
-               'cron','net','extensions','vault','pgsodium',
-               'auth','storage','realtime','graphql','graphql_public',
-               'supabase_migrations')
-           AND n.nspname NOT LIKE 'pg_%'
+         WHERE n.nspname = p_schema
            AND p.prokind <> 'a'
         UNION ALL
         SELECT v_picture_id,
@@ -157,12 +147,7 @@ BEGIN
           JOIN pg_catalog.pg_class c ON c.oid = tg.tgrelid
           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
          WHERE NOT tg.tgisinternal
-           AND n.nspname NOT IN (
-               'pg_catalog','information_schema','pg_toast',
-               'cron','net','extensions','vault','pgsodium',
-               'auth','storage','realtime','graphql','graphql_public',
-               'supabase_migrations')
-           AND n.nspname NOT LIKE 'pg_%';
+           AND n.nspname = p_schema;
 
         GET DIAGNOSTICS v_count = ROW_COUNT;
         UPDATE guardops.shape_picture SET object_count = v_count WHERE id = v_picture_id;
