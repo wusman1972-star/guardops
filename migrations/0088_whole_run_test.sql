@@ -78,7 +78,7 @@ BEGIN
     RETURN NEXT;
 
     -- Step 6: photograph the database before
-    v_before_pic := guardops.take_shape(v_db_id, 'BEFORE');
+    v_before_pic := guardops.take_shape(v_db_id,'whole_run_test_work','CONNECTION');
     step := 6; what := 'take before picture';
     got  := 'picture id ' || v_before_pic::text;
     want := 'a before picture id';
@@ -95,7 +95,7 @@ BEGIN
     RETURN NEXT;
 
     -- Step 8: photograph the database after
-    v_after_pic := guardops.take_shape(v_db_id, 'AFTER');
+    v_after_pic := guardops.take_shape(v_db_id,'whole_run_test_work','CONNECTION');
     step := 8; what := 'take after picture';
     got  := 'picture id ' || v_after_pic::text;
     want := 'an after picture id';
