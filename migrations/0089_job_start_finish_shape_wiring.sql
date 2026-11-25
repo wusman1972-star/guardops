@@ -40,6 +40,12 @@ ALTER TABLE guardops.job
   ALTER COLUMN repo_link_id DROP NOT NULL;
 
 -- ==========================================================================
+-- 2. shape_picture records which schema was photographed (board 12052).
+-- ==========================================================================
+ALTER TABLE guardops.shape_picture
+  ADD COLUMN IF NOT EXISTS watched_schema text;
+
+-- ==========================================================================
 -- 3. take_shape: fix the test-database path.
 --
 --    Scope the lookup to the caller's own account so a caller cannot
@@ -78,9 +84,10 @@ BEGIN
     END IF;
 
     IF COALESCE(v_is_test, false) THEN
-        INSERT INTO guardops.shape_picture (database_id, kind)
+        INSERT INTO guardops.shape_picture (database_id, kind, watched_schema)
         VALUES (p_database_id,
-                upper(coalesce(nullif(btrim(p_kind), ''), 'WATCH')))
+                upper(coalesce(nullif(btrim(p_kind), ''), 'WATCH')),
+                p_schema)
         RETURNING id INTO v_picture_id;
 
         -- Photograph this database locally: read pg_class, pg_proc, pg_trigger
@@ -163,9 +170,10 @@ BEGIN
         RAISE EXCEPTION 'no connection sealed under the name %', v_secret;
     END IF;
 
-    INSERT INTO guardops.shape_picture (database_id, kind)
+    INSERT INTO guardops.shape_picture (database_id, kind, watched_schema)
          VALUES (p_database_id,
-                 upper(coalesce(nullif(btrim(p_kind), ''), 'WATCH')))
+                 upper(coalesce(nullif(btrim(p_kind), ''), 'WATCH')),
+                 p_schema)
       RETURNING id INTO v_picture_id;
 
     INSERT INTO guardops.shape_object
@@ -457,7 +465,8 @@ begin
     select max(id) into v_prev from guardops.shape_picture
      where database_id = v_pic.database_id and id < p_picture_id
        and state = 'DONE' and judged_at is not null
-       and kind is distinct from 'SURVEY';
+       and kind is distinct from 'SURVEY'
+       and watched_schema = v_pic.watched_schema;
   end if;
 
   if v_prev is null then
