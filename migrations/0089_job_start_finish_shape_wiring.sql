@@ -37,40 +37,6 @@ ALTER TABLE guardops.job
   ALTER COLUMN repo_link_id DROP NOT NULL;
 
 -- ==========================================================================
--- 2. job_add: origin/master version.
---    Takes a database id, sets watched_database_id, and fills repo_link_id
---    from the account's most recently registered link (no trigger required).
--- ==========================================================================
-CREATE OR REPLACE FUNCTION guardops.job_add(
-    p_database_id bigint,
-    p_what_for    text
-)
-  RETURNS bigint
-  LANGUAGE plpgsql
-  SECURITY DEFINER
-  SET search_path TO ''
-AS $function$
-DECLARE
-  v_id      bigint;
-  v_link_id bigint;
-BEGIN
-  SELECT id INTO v_link_id
-    FROM guardops.repo_link
-   WHERE account_id = guardops.current_account()
-   ORDER BY id DESC
-   LIMIT 1;
-
-  INSERT INTO guardops.job (account_id, watched_database_id, repo_link_id, what_for)
-  VALUES (guardops.current_account(), p_database_id, v_link_id, p_what_for)
-  RETURNING id INTO v_id;
-  RETURN v_id;
-END;
-$function$;
-
-REVOKE EXECUTE ON FUNCTION guardops.job_add(bigint, text) FROM PUBLIC;
-GRANT  EXECUTE ON FUNCTION guardops.job_add(bigint, text) TO service_role;
-
--- ==========================================================================
 -- 3. take_shape: fix the test-database path.
 --
 --    Scope the lookup to the caller's own account so a caller cannot
@@ -483,7 +449,11 @@ begin
   -- Fix B: match by name AND input argument types AND object kind.
   insert into guardops.shape_change
         (account_id, database_id, picture_id, prev_picture_id, change_kind, schema_name, object_name, object_kind)
-  select v_pic.account_id, v_pic.database_id, p_picture_id, v_prev, 'APPEARED', n.schema_name, n.object_name, n.object_kind
+  select v_pic.account_id, v_pic.database_id, p_picture_id, v_prev, 'APPEARED', n.schema_name,
+         case when n.object_kind = 'function'
+              then n.object_name || '(' || coalesce(n.column_shape->>'args', '') || ')'
+              else n.object_name end,
+         n.object_kind
     from guardops.shape_object n
    where n.picture_id = p_picture_id and n.object_kind is distinct from 'trigger'
      and not exists (select 1 from guardops.shape_object o
@@ -495,7 +465,11 @@ begin
 
   insert into guardops.shape_change
         (account_id, database_id, picture_id, prev_picture_id, change_kind, schema_name, object_name, object_kind)
-  select v_pic.account_id, v_pic.database_id, p_picture_id, v_prev, 'GONE', o.schema_name, o.object_name, o.object_kind
+  select v_pic.account_id, v_pic.database_id, p_picture_id, v_prev, 'GONE', o.schema_name,
+         case when o.object_kind = 'function'
+              then o.object_name || '(' || coalesce(o.column_shape->>'args', '') || ')'
+              else o.object_name end,
+         o.object_kind
     from guardops.shape_object o
    where o.picture_id = v_prev and o.object_kind is distinct from 'trigger'
      and not exists (select 1 from guardops.shape_object n
@@ -507,7 +481,11 @@ begin
 
   insert into guardops.shape_change
         (account_id, database_id, picture_id, prev_picture_id, change_kind, schema_name, object_name, object_kind)
-  select v_pic.account_id, v_pic.database_id, p_picture_id, v_prev, 'COLUMNS', n.schema_name, n.object_name, n.object_kind
+  select v_pic.account_id, v_pic.database_id, p_picture_id, v_prev, 'COLUMNS', n.schema_name,
+         case when n.object_kind = 'function'
+              then n.object_name || '(' || coalesce(n.column_shape->>'args', '') || ')'
+              else n.object_name end,
+         n.object_kind
     from guardops.shape_object n
     join guardops.shape_object q on q.picture_id = v_prev
          and q.schema_name = n.schema_name and q.object_name = n.object_name
@@ -555,126 +533,3 @@ REVOKE EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) FROM anon;
 REVOKE EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) FROM authenticated;
 GRANT  EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) TO service_role;
 
--- ==========================================================================
--- 7. commit_record: call commit_object_build inline.
---
---    commit_seen_autobuild_objects (removed above) built commit_object rows
---    on every INSERT into commit_seen.  commit_object_build does the same
---    work and already exists.  Calling it here makes commit_record
---    self-contained and removes the trigger dependency.
--- ==========================================================================
-CREATE OR REPLACE FUNCTION guardops.commit_record(
-  p_repo         text,
-  p_branch       text,
-  p_sha          text,
-  p_author       text,
-  p_committed_at timestamptz,
-  p_message      text,
-  p_files        jsonb,
-  p_pull_id      bigint
-)
-  RETURNS bigint
-  LANGUAGE plpgsql
-  SECURITY DEFINER
-  SET search_path TO ''
-AS $function$
-declare
-  v_pull    guardops.repo_pull%rowtype;
-  v_link_id bigint;
-  v_files   jsonb := coalesce(p_files, '{}'::jsonb);
-  v_row     record;
-  v_id      bigint;
-  v_fill_ok boolean;
-  v_filled  text[];
-begin
-  -- test sentinel: NULL pull_id means no-op (used by one_run_test step 6)
-  if p_pull_id is null then
-    return 0;
-  end if;
-
-  if p_files is not null and jsonb_typeof(p_files) <> 'object' then
-    raise exception '[GIT DOOR] files must be a JSON object, got % - a double-encoded string or array is refused (board 200 A3)', jsonb_typeof(p_files);
-  end if;
-  if p_files is not null and jsonb_path_exists(p_files, 'strict $.* ? (@.type() != "string")') then
-    raise exception '[GIT DOOR] every files value must be a string (a patch or the placeholder) - got a % value (ORDER 94 hole 128)',
-      (select jsonb_typeof(e.value) from jsonb_each(p_files) e where jsonb_typeof(e.value) <> 'string' limit 1);
-  end if;
-
-  select * into v_pull from guardops.repo_pull
-   where id = p_pull_id and account_id = guardops.current_account() for share;
-  if not found then
-    raise exception '[GIT DOOR] there is no pull %', p_pull_id;
-  end if;
-  if v_pull.proof_status <> 'OPEN' then
-    raise exception '[GIT DOOR] pull % is % - commits land only on an OPEN pull', p_pull_id, v_pull.proof_status;
-  end if;
-
-  select id into v_link_id from guardops.repo_link
-   where repo = p_repo and branch = p_branch and account_id = guardops.current_account();
-  if v_link_id is null then
-    raise exception '[GIT DOOR] % / % is not a linked repo - this door no longer creates repo_link rows', p_repo, p_branch;
-  end if;
-  if v_link_id <> v_pull.repo_link_id then
-    raise exception '[GIT DOOR] pull % belongs to repo link %, not % / %', p_pull_id, v_pull.repo_link_id, p_repo, p_branch;
-  end if;
-
-  select id, files, message, author, committed_at into v_row
-    from guardops.commit_seen
-   where repo_link_id = v_link_id and sha = p_sha and account_id = guardops.current_account();
-
-  if not found then
-    insert into guardops.commit_seen
-      (account_id, repo_link_id, repo, sha, author, committed_at, message, files, first_pull_id)
-    values (guardops.current_account(), v_link_id, p_repo, p_sha, p_author, p_committed_at, p_message, v_files, p_pull_id)
-    returning id into v_id;
-  else
-    v_id := v_row.id;
-    if v_row.files is not distinct from v_files
-       and v_row.message is not distinct from p_message
-       and v_row.author is not distinct from p_author
-       and v_row.committed_at is not distinct from p_committed_at then
-      null;
-    else
-      if v_row.message is not distinct from p_message
-         and v_row.author is not distinct from p_author
-         and v_row.committed_at is not distinct from p_committed_at then
-        select not exists (
-                 select 1
-                   from jsonb_each_text(v_row.files) o
-                   full join jsonb_each_text(v_files) nw on nw.key = o.key
-                  where o.key is null or nw.key is null
-                     or (o.value is distinct from nw.value
-                         and o.value <> '(no patch returned by GitHub)')
-               ) into v_fill_ok;
-      else
-        v_fill_ok := false;
-      end if;
-      if v_fill_ok then
-        select array_agg(o.key order by o.key) into v_filled
-          from jsonb_each_text(v_row.files) o
-          join jsonb_each_text(v_files) nw on nw.key = o.key
-         where o.value is distinct from nw.value;
-        update guardops.commit_seen set files = v_files
-         where id = v_id and account_id = guardops.current_account();
-        insert into guardops.commit_drift (account_id, repo_link_id, sha, pull_id, kind, differed, resolved_at)
-        values (guardops.current_account(), v_link_id, p_sha, p_pull_id, 'PATCH_FILLED',
-                jsonb_build_object('filled_keys', to_jsonb(v_filled)), now());
-      else
-        insert into guardops.commit_drift (account_id, repo_link_id, sha, pull_id, kind, differed)
-        values (guardops.current_account(), v_link_id, p_sha, p_pull_id, 'CONTENT_DRIFT', jsonb_build_object(
-          'files_differ',         v_row.files is distinct from v_files,
-          'message_differs',      v_row.message is distinct from p_message,
-          'author_differs',       v_row.author is distinct from p_author,
-          'committed_at_differs', v_row.committed_at is distinct from p_committed_at));
-      end if;
-    end if;
-  end if;
-
-  insert into guardops.pull_commit (account_id, pull_id, commit_seen_id)
-  values (guardops.current_account(), p_pull_id, v_id)
-  on conflict (pull_id, commit_seen_id) do nothing;
-
-  PERFORM guardops.commit_object_build(v_id);
-
-  return v_id;
-end $function$;
