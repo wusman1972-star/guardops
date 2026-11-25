@@ -17,9 +17,18 @@ param(
 # them, neither holding the other's work, and nothing ever reaching master.
 #
 # A held job is not finished. So the next job CONTINUES ON THE HELD BRANCH instead of starting
-# a new one from master. Nothing bad rides onto master by doing this: the merge gate still runs
-# on every job, and the reviewer now reads the committed diff against master, so what it judges
-# is the whole accumulated change before any of it lands.
+# a new one from master.
+#
+# What actually covers the carried-on commits, stated exactly, because the earlier wording here
+# claimed a guarantee it does not have: cr_review.bat sets its base to
+# `git merge-base origin/master HEAD` (board 12007), so the review normally reads every commit
+# the merge would add to master, carried-on ones included - verified on boards 12044 and 12048,
+# where the base was origin/master 12dbcee and the diff covered all ten commits. BUT that is not
+# a guarantee: if merge-base fails, cr_review.bat falls back to tools\cr_reviewed_head.txt and
+# then to HEAD~1, and either fallback would review only the newest commit while the merge still
+# carries the rest. The severity gate reads only the current board's verdict files, so on that
+# fallback path a held Major could reach master. The fallback is the hole to close, not the
+# carry-on itself. Do not restore the old comment claiming master is always the base.
 Set-Location $RepoPath
 $br = 'board-' + $BoardId
 
@@ -40,6 +49,23 @@ if (Test-Path -LiteralPath $heldFile) {
     if ($null -eq $held) { $held = '' }
     $held = $held.Trim()
 }
+# If the hold names THIS board's own branch, never run checkout -B against master: that resets
+# the branch and deletes the held commits from its tip. Check the branch out as it stands.
+if ($held -ne '' -and $held -eq $br) {
+    git rev-parse --verify --quiet ('refs/heads/' + $br) *> $null
+    if ($LASTEXITCODE -eq 0) {
+        $out = git checkout $br 2>&1
+        $out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            Add-Content -LiteralPath $LogPath -Value ('COULD NOT CHECK OUT THE HELD BRANCH ' + $br + ' - nothing started') -Encoding UTF8
+            exit 1
+        }
+        $tip = (git rev-parse HEAD 2>&1 | Out-String).Trim()
+        Add-Content -LiteralPath $LogPath -Value ('ON BRANCH: ' + $br + ' RESUMED its own held tip at ' + $tip.Substring(0,[Math]::Min(8,$tip.Length)) + ' - not reset to master, the held work is kept') -Encoding UTF8
+        exit 0
+    }
+}
+
 $carryOn = ''
 if ($held -ne '' -and $held -ne $br) {
     git rev-parse --verify --quiet ('refs/heads/' + $held) *> $null
