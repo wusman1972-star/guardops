@@ -1,0 +1,6 @@
+===== base 17d747dffafd4b41d3abe9f3f79342c2885fc6c9 (17d747dffafd4b41d3abe9f3f79342c2885fc6c9) ===== 
+SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11990_20261125_102244.txt
+===== scope migrations ===== 
+{"type":"review_context","reviewType":"all","currentBranch":"board-11995","baseBranch":"master","baseCommit":"17d747dffafd4b41d3abe9f3f79342c2885fc6c9","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
+{"type":"heartbeat","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["migrations/0086_lock_guardops_doors.sql"],"outcome":"completed","message":"Review completed"}
