@@ -34,6 +34,9 @@ ALTER TABLE guardops.job
   REFERENCES guardops.shape_picture(id);
 
 ALTER TABLE guardops.job
+  ADD COLUMN IF NOT EXISTS watched_schema text;
+
+ALTER TABLE guardops.job
   ALTER COLUMN repo_link_id DROP NOT NULL;
 
 -- ==========================================================================
@@ -258,20 +261,24 @@ END;
 $function$;
 
 -- ==========================================================================
--- 4. job_start: open a job with an explicit repo link and take the BEFORE picture.
+-- 4. job_start: open a job with an explicit schema to watch and take the BEFORE picture.
 --
---    job_start fills that gap by writing the link directly and immediately
---    photographing the target schema.  The before_picture_id is stored on
---    the job so job_finish can derive the AFTER schema without a separate
---    parameter.
+--    p_schema names the schema to photograph — it is distinct from p_what_for
+--    (a human description) so a description that is not a real schema name can
+--    never silently produce an empty picture.
 --
---    Security: the caller may only start a job against a watched database
---    that belongs to their own account.
+--    Refuses a schema that does not exist (pg_namespace check for test databases;
+--    empty-picture guard for real databases via dblink).  Refuses a database the
+--    caller does not own.  Refuses when the picture comes back empty.
 -- ==========================================================================
+-- Drop the old 3-argument overload so there is no ambiguity.
+DROP FUNCTION IF EXISTS guardops.job_start(bigint, bigint, text);
+
 CREATE OR REPLACE FUNCTION guardops.job_start(
     p_watched_database_id bigint,
     p_repo_link_id        bigint,
-    p_what_for            text
+    p_what_for            text,
+    p_schema              text
 )
   RETURNS bigint
   LANGUAGE plpgsql
@@ -279,11 +286,12 @@ CREATE OR REPLACE FUNCTION guardops.job_start(
   SET search_path TO ''
 AS $$
 DECLARE
-  v_id  bigint;
-  v_pic bigint;
+  v_id      bigint;
+  v_pic     bigint;
+  v_is_test boolean;
+  v_count   bigint;
 BEGIN
-  -- Fault 1 fix: refuse if the watched database does not belong to this account.
-  PERFORM 1
+  SELECT is_test INTO v_is_test
     FROM guardops.watched_database
    WHERE id = p_watched_database_id
      AND account_id = guardops.current_account();
@@ -291,29 +299,50 @@ BEGIN
     RAISE EXCEPTION 'watched database % does not belong to this account', p_watched_database_id;
   END IF;
 
+  IF p_schema IS NULL OR btrim(p_schema) = '' THEN
+    RAISE EXCEPTION 'job_start: p_schema must name a schema to watch';
+  END IF;
+
+  -- For test databases validate the schema exists locally.
+  IF COALESCE(v_is_test, false) THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname = p_schema
+    ) THEN
+      RAISE EXCEPTION 'job_start: schema % does not exist', p_schema;
+    END IF;
+  END IF;
+
   INSERT INTO guardops.job
-    (account_id, watched_database_id, repo_link_id, what_for)
+    (account_id, watched_database_id, repo_link_id, what_for, watched_schema)
   VALUES
-    (guardops.current_account(), p_watched_database_id, p_repo_link_id, p_what_for)
+    (guardops.current_account(), p_watched_database_id, p_repo_link_id, p_what_for, p_schema)
   RETURNING id INTO v_id;
 
-  v_pic := guardops.take_shape(p_watched_database_id, p_what_for);
+  v_pic := guardops.take_shape(p_watched_database_id, p_schema);
+
+  -- Refuse an empty picture — a job that photographed nothing watched nothing.
+  SELECT object_count INTO v_count FROM guardops.shape_picture WHERE id = v_pic;
+  IF COALESCE(v_count, 0) = 0 THEN
+    RAISE EXCEPTION 'job_start: schema % returned no objects — refusing empty picture', p_schema;
+  END IF;
+
   UPDATE guardops.job SET before_picture_id = v_pic WHERE id = v_id;
 
   RETURN v_id;
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text) FROM anon;
-REVOKE EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text) FROM authenticated;
-GRANT  EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text) TO service_role;
+REVOKE EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text, text) FROM anon;
+REVOKE EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text, text) FROM authenticated;
+GRANT  EXECUTE ON FUNCTION guardops.job_start(bigint, bigint, text, text) TO service_role;
 
 -- ==========================================================================
 -- 5. job_finish: take the AFTER picture, judge it, then file the claim.
 --
---    A job opened by job_add has no before picture.  Finishing such a job
---    is refused: there is nothing to compare against.
+--    Reads watched_schema (stored by job_start) so it photographs the same
+--    schema as the before picture.  Refuses if no before picture exists or
+--    if the after picture comes back empty.
 -- ==========================================================================
 CREATE OR REPLACE FUNCTION guardops.job_finish(
     p_job_id             bigint,
@@ -331,10 +360,9 @@ DECLARE
   v_schema     text;
   v_before_pic bigint;
   v_after      bigint;
+  v_count      bigint;
 BEGIN
-  -- Fault 2 fix: read what_for (the exact schema name) instead of lower(kind).
-  -- Fault 3 fix: also fetch before_picture_id so we can refuse a job with none.
-  SELECT j.watched_database_id, j.what_for, j.before_picture_id
+  SELECT j.watched_database_id, j.watched_schema, j.before_picture_id
     INTO v_db_id, v_schema, v_before_pic
     FROM guardops.job j
    WHERE j.id = p_job_id
@@ -344,12 +372,18 @@ BEGIN
     RAISE EXCEPTION 'job % not found or does not belong to this account', p_job_id;
   END IF;
 
-  -- Fault 3 fix: refuse when no before picture exists (job was opened with job_add).
   IF v_before_pic IS NULL THEN
     RAISE EXCEPTION 'job % has no before picture — was not opened with job_start', p_job_id;
   END IF;
 
   v_after := guardops.take_shape(v_db_id, v_schema);
+
+  -- Refuse an empty after picture — a job that photographed nothing proved nothing.
+  SELECT object_count INTO v_count FROM guardops.shape_picture WHERE id = v_after;
+  IF COALESCE(v_count, 0) = 0 THEN
+    RAISE EXCEPTION 'job_finish: after picture for schema % returned no objects', v_schema;
+  END IF;
+
   PERFORM guardops.shape_judge(v_after, v_before_pic);
   PERFORM guardops.claim_add(p_job_id, p_delivered_item_ids, p_added, p_deleted);
 END;
@@ -532,4 +566,129 @@ REVOKE EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) FROM anon;
 REVOKE EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) FROM authenticated;
 GRANT  EXECUTE ON FUNCTION guardops.shape_judge(bigint, bigint) TO service_role;
+
+-- ==========================================================================
+-- 7. commit_record: call commit_object_build inline after each commit lands.
+--
+--    The commit_seen_autobuild_objects trigger was dropped above.  This one
+--    added line in commit_record replaces it: every commit that lands now
+--    immediately builds its commit_object rows, so job_verdict finds real
+--    proof rather than "no commit record".
+-- ==========================================================================
+CREATE OR REPLACE FUNCTION guardops.commit_record(
+    p_repo         text,
+    p_branch       text,
+    p_sha          text,
+    p_author       text,
+    p_committed_at timestamptz,
+    p_message      text,
+    p_files        jsonb,
+    p_pull_id      bigint
+)
+  RETURNS bigint
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO ''
+AS $function$
+declare
+  v_pull    guardops.repo_pull%rowtype;
+  v_link_id bigint;
+  v_files   jsonb := coalesce(p_files, '{}'::jsonb);
+  v_row     record;
+  v_id      bigint;
+  v_fill_ok boolean;
+  v_filled  text[];
+begin
+  -- test sentinel: NULL pull_id means no-op (used by one_run_test step 6)
+  if p_pull_id is null then
+    return 0;
+  end if;
+
+  if p_files is not null and jsonb_typeof(p_files) <> 'object' then
+    raise exception '[GIT DOOR] files must be a JSON object, got % - a double-encoded string or array is refused (board 200 A3)', jsonb_typeof(p_files);
+  end if;
+  if p_files is not null and jsonb_path_exists(p_files, 'strict $.* ? (@.type() != "string")') then
+    raise exception '[GIT DOOR] every files value must be a string (a patch or the placeholder) - got a % value (ORDER 94 hole 128)',
+      (select jsonb_typeof(e.value) from jsonb_each(p_files) e where jsonb_typeof(e.value) <> 'string' limit 1);
+  end if;
+
+  select * into v_pull from guardops.repo_pull
+   where id = p_pull_id and account_id = guardops.current_account() for share;
+  if not found then
+    raise exception '[GIT DOOR] there is no pull %', p_pull_id;
+  end if;
+  if v_pull.proof_status <> 'OPEN' then
+    raise exception '[GIT DOOR] pull % is % - commits land only on an OPEN pull', p_pull_id, v_pull.proof_status;
+  end if;
+
+  select id into v_link_id from guardops.repo_link
+   where repo = p_repo and branch = p_branch and account_id = guardops.current_account();
+  if v_link_id is null then
+    raise exception '[GIT DOOR] % / % is not a linked repo - this door no longer creates repo_link rows', p_repo, p_branch;
+  end if;
+  if v_link_id <> v_pull.repo_link_id then
+    raise exception '[GIT DOOR] pull % belongs to repo link %, not % / %', p_pull_id, v_pull.repo_link_id, p_repo, p_branch;
+  end if;
+
+  select id, files, message, author, committed_at into v_row
+    from guardops.commit_seen
+   where repo_link_id = v_link_id and sha = p_sha and account_id = guardops.current_account();
+
+  if not found then
+    insert into guardops.commit_seen
+      (account_id, repo_link_id, repo, sha, author, committed_at, message, files, first_pull_id)
+    values (guardops.current_account(), v_link_id, p_repo, p_sha, p_author, p_committed_at, p_message, v_files, p_pull_id)
+    returning id into v_id;
+  else
+    v_id := v_row.id;
+    if v_row.files is not distinct from v_files
+       and v_row.message is not distinct from p_message
+       and v_row.author is not distinct from p_author
+       and v_row.committed_at is not distinct from p_committed_at then
+      null;
+    else
+      if v_row.message is not distinct from p_message
+         and v_row.author is not distinct from p_author
+         and v_row.committed_at is not distinct from p_committed_at then
+        select not exists (
+                 select 1
+                   from jsonb_each_text(v_row.files) o
+                   full join jsonb_each_text(v_files) nw on nw.key = o.key
+                  where o.key is null or nw.key is null
+                     or (o.value is distinct from nw.value
+                         and o.value <> '(no patch returned by GitHub)')
+               ) into v_fill_ok;
+      else
+        v_fill_ok := false;
+      end if;
+      if v_fill_ok then
+        select array_agg(o.key order by o.key) into v_filled
+          from jsonb_each_text(v_row.files) o
+          join jsonb_each_text(v_files) nw on nw.key = o.key
+         where o.value is distinct from nw.value;
+        update guardops.commit_seen set files = v_files
+         where id = v_id and account_id = guardops.current_account();
+        insert into guardops.commit_drift (account_id, repo_link_id, sha, pull_id, kind, differed, resolved_at)
+        values (guardops.current_account(), v_link_id, p_sha, p_pull_id, 'PATCH_FILLED',
+                jsonb_build_object('filled_keys', to_jsonb(v_filled)), now());
+      else
+        insert into guardops.commit_drift (account_id, repo_link_id, sha, pull_id, kind, differed)
+        values (guardops.current_account(), v_link_id, p_sha, p_pull_id, 'CONTENT_DRIFT', jsonb_build_object(
+          'files_differ',         v_row.files is distinct from v_files,
+          'message_differs',      v_row.message is distinct from p_message,
+          'author_differs',       v_row.author is distinct from p_author,
+          'committed_at_differs', v_row.committed_at is distinct from p_committed_at));
+      end if;
+    end if;
+  end if;
+
+  insert into guardops.pull_commit (account_id, pull_id, commit_seen_id)
+  values (guardops.current_account(), p_pull_id, v_id)
+  on conflict (pull_id, commit_seen_id) do nothing;
+
+  -- Build commit_object rows inline, replacing the removed trigger.
+  PERFORM guardops.commit_object_build(v_id);
+
+  return v_id;
+end $function$;
 
