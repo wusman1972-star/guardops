@@ -253,6 +253,9 @@ BEGIN
 END;
 $function$;
 
+REVOKE EXECUTE ON FUNCTION guardops.take_shape(bigint, text, text) FROM PUBLIC;
+GRANT  EXECUTE ON FUNCTION guardops.take_shape(bigint, text, text) TO service_role;
+
 -- ==========================================================================
 -- 4. job_start: open a job with an explicit schema to watch and take the BEFORE picture.
 --
