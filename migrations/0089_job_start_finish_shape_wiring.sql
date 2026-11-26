@@ -463,6 +463,10 @@ begin
     if v_base.account_id <> v_pic.account_id then
       raise exception 'baseline picture % belongs to a different account than picture %', p_baseline_id, p_picture_id;
     end if;
+    if v_base.watched_schema is distinct from v_pic.watched_schema then
+      raise exception 'baseline picture % watches schema % but picture % watches schema %',
+        p_baseline_id, coalesce(v_base.watched_schema,'(unknown)'), p_picture_id, coalesce(v_pic.watched_schema,'(unknown)');
+    end if;
     v_prev := p_baseline_id;
   else
     select max(id) into v_prev from guardops.shape_picture
