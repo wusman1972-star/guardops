@@ -48,7 +48,15 @@ begin
   end if;
 
   -- When re-judging with an explicit baseline, discard the prior comparison first.
+  -- But a comparison a finished job cites is that job's proof: refuse to erase it.
+  -- job_finish calls this BEFORE it stamps after_picture_id, so the first judging
+  -- of a picture is never blocked - only a later re-judging of a cited one.
   if p_baseline_id is not null and v_pic.judged_at is not null then
+    if exists (select 1 from guardops.job j
+                where j.after_picture_id = p_picture_id
+                  and j.account_id = v_pic.account_id) then
+      raise exception 'picture % is the after picture of a finished job; its comparison is that job''s proof and may not be re-judged', p_picture_id;
+    end if;
     delete from guardops.shape_change where picture_id = p_picture_id;
     update guardops.shape_picture set judged_at = null where id = p_picture_id;
   end if;
