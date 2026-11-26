@@ -16,8 +16,8 @@ AS $function$
 DECLARE
   v_id bigint;
 BEGIN
-  INSERT INTO guardops.watched_database (account_id, label, is_test)
-  VALUES (guardops.current_account(), p_label, true)
+  INSERT INTO guardops.watched_database (account_id, label, is_test, secret_name)
+  VALUES (guardops.current_account(), p_label, true, 'test:' || p_label)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
