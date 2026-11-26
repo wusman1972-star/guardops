@@ -143,6 +143,7 @@ DECLARE
   v_a_acct bigint; v_a_cust bigint; v_a_db bigint;
   v_b_acct bigint; v_b_cust bigint;
   v_refused boolean;
+  v_why     text;
   v_n bigint;
   v_ok boolean;
 BEGIN
@@ -193,15 +194,34 @@ BEGIN
     SELECT guardops.connected_account_add(v_a_cust, 'supabase', NULL, 'proof-0101-ok-tok') INTO v_n;
     ASSERT v_n IS NOT NULL, 'connected_account_add must still work for your own customer';
 
-    -- (5) signed in as A, asking for B's verdict: refused
+    -- (5) a BROWSER caller signed in as A, asking for B's verdict: refused.
+    -- 27 Nov, review finding: the first version ran this as the migration role,
+    -- which is trusted - act_as_house then simply switched the account to B and
+    -- the check passed. What actually raised was the missing job, not the
+    -- ownership check. Another pass for the wrong reason. It runs as the
+    -- browser role now, with A's token, which is the case that matters.
+    GRANT USAGE ON SCHEMA guardops TO authenticated;
+    GRANT EXECUTE ON FUNCTION guardops.verdict_for_customer(bigint, bigint) TO authenticated;
+    PERFORM pg_catalog.set_config('request.jwt.claims',
+      '{"sub":"proof-0101-A-sub","role":"authenticated"}', true);
+
+    SET LOCAL ROLE authenticated;
     v_refused := false;
     BEGIN
       PERFORM * FROM guardops.verdict_for_customer(v_b_cust, 1);
     EXCEPTION WHEN OTHERS THEN
-      v_refused := true;
+      v_refused := true; v_why := SQLERRM;
     END;
+    RESET ROLE;
     ASSERT v_refused,
       'verdict_for_customer must refuse a customer outside the signed-in account';
+    ASSERT v_why LIKE '%may only act as themselves%' OR v_why LIKE '%NOT YOURS%',
+      'the refusal must come from the identity or ownership check, not from a missing job. got: '
+      || COALESCE(v_why, '<null>');
+
+    PERFORM pg_catalog.set_config('request.jwt.claims', '', true);
+    REVOKE EXECUTE ON FUNCTION guardops.verdict_for_customer(bigint, bigint) FROM authenticated;
+    REVOKE USAGE ON SCHEMA guardops FROM authenticated;
 
     RAISE INFO 'proof/0101: is_theirs scoped, connected_account_add refuses another account''s customer, verdict_for_customer refuses another account''s customer';
     RAISE EXCEPTION 'proof/0101/rollback';
