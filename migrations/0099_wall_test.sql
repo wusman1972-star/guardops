@@ -127,7 +127,27 @@ BEGIN
     SET LOCAL ROLE guardops_wall_probe;
 
     SELECT count(*) INTO v_seen FROM guardops.job WHERE account_id = v_a_acct;
-    step := 4; what := 'A still sees its own job, read by a no-bypass role';
+    step := 4; what := 'A still sees its own job';
+    got := v_seen::text || ' rows'; want := '1 rows'; pass := (v_seen = 1); RETURN NEXT;
+
+    SELECT count(*) INTO v_seen FROM guardops.plan_given WHERE account_id = v_a_acct;
+    step := 4; what := 'A still sees its own plan';
+    got := v_seen::text || ' rows'; want := '1 rows'; pass := (v_seen = 1); RETURN NEXT;
+
+    SELECT count(*) INTO v_seen FROM guardops.watched_database WHERE account_id = v_a_acct;
+    step := 4; what := 'A still sees its own database';
+    got := v_seen::text || ' rows'; want := '1 rows'; pass := (v_seen = 1); RETURN NEXT;
+
+    SELECT count(*) INTO v_seen FROM guardops.repo_link WHERE account_id = v_a_acct;
+    step := 4; what := 'A still sees its own code link';
+    got := v_seen::text || ' rows'; want := '1 rows'; pass := (v_seen = 1); RETURN NEXT;
+
+    SELECT count(*) INTO v_seen FROM guardops.account WHERE id = v_a_acct;
+    step := 4; what := 'A still sees its own account row';
+    got := v_seen::text || ' rows'; want := '1 rows'; pass := (v_seen = 1); RETURN NEXT;
+
+    SELECT count(*) INTO v_seen FROM guardops.customer WHERE account_id = v_a_acct;
+    step := 4; what := 'A still sees its own customer row';
     got := v_seen::text || ' rows'; want := '1 rows'; pass := (v_seen = 1); RETURN NEXT;
 
     -- ── and with no grant at all it is refused outright ─────────────────────
@@ -161,7 +181,12 @@ BEGIN
 END;
 $function$;
 
+-- 26 Nov, review finding: this is NOT granted to service_role. It is SECURITY
+-- INVOKER, and it has to CREATE ROLE and GRANT on tables to prove anything, so
+-- it needs owner-level rights the service key does not have and should not be
+-- given. Granting it to service_role would hand out a function the service key
+-- can never finish. It is an install-time and audit-time proof, run by the
+-- database owner - which is exactly who runs the install.
 REVOKE EXECUTE ON FUNCTION guardops.wall_test() FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION guardops.wall_test() FROM anon;
 REVOKE EXECUTE ON FUNCTION guardops.wall_test() FROM authenticated;
-GRANT  EXECUTE ON FUNCTION guardops.wall_test() TO service_role;
