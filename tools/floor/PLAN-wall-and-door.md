@@ -5,7 +5,8 @@ Database: **mfysxqhediepzohzhufp**, schema `guardops`. Not the old floor.
 Cold-read by Code on 26 Nov (report: board 12114). Jobs 1–3 came back clean on
 all six questions. Job 4 came back with a real hole, now written in below as its
 own job. CodeRabbit then raised three Major findings on this plan itself, all
-three accepted and folded into jobs 3 and 4. Order is not negotiable.
+three accepted and folded into jobs 3 and 4. Board 12119 raised two more Major
+findings, both accepted and folded in. Order is not negotiable.
 
 **How every job here is proved:** installed from GitHub master into a brand new
 empty Postgres 16, every migration in order, then both self-tests — and then a
@@ -71,8 +72,9 @@ table needs a SELECT/write split.
 The only reason to believe any of the above. One new function, one rolled-back
 block, numbered rows with pass true/false in the same shape as `one_run_test`.
 
-**Reviewed and corrected on 26 Nov (CodeRabbit, 3 Major on the first draft of
-this plan). Both corrections matter more than the rest of the job:**
+**Reviewed and corrected on 26 Nov (CodeRabbit, 3 Major on first draft; board
+12119, 1 more Major). All three corrections matter more than the rest of the
+job:**
 
 - **Seed a row in every table whose separation is being tested.** A zero count
   proves nothing if the table was empty anyway — that is exactly the mistake
@@ -83,16 +85,23 @@ this plan). Both corrections matter more than the rest of the job:**
   throwaway NOLOGIN role for the test, `SET LOCAL ROLE` to it, and prove it has
   no BYPASSRLS and no table grant. `authenticated` carries whatever Supabase
   gives it, which is not a controlled starting point.
+- **Grant the test role a temporary SELECT before the zero-count reads, then
+  Revoke the grant.** A role with no grant at all gets permission denied, not
+  zero — and permission denied, not zero, proves nothing about row filtering.
+  Only the zero proves the rule is working. Grant a temporary `SELECT` inside
+  the rolled-back block, assert zero, then revoke and assert the bare SELECT is
+  refused. Second line of defence, not a substitute for the first.
 
 The steps:
 
 1. Sign in as customer A and write a row into **every** table under test — not
    just a job and a plan row. Assert each one is visible to A.
 2. Sign in as customer B.
-3. `SET LOCAL ROLE` to the no-bypass test role and read A's rows table by
-   table — every count must be **zero**, against tables that are known not to
-   be empty.
-4. Prove a direct `SELECT` as that role is refused outright for want of a grant.
+3. Grant the test role a temporary `SELECT` on the tables under test. `SET
+   LOCAL ROLE` to it and read A's rows table by table — every count must be
+   **zero**, against tables that are known not to be empty.
+4. Revoke the grant. Prove a direct `SELECT` as that role is now refused
+   outright — permission denied, not zero.
 5. Sign back in as A and prove A still sees A's own rows — the wall must not
    lock the owner out.
 
@@ -108,8 +117,10 @@ DEFINER and bypasses the wall, so job 2 does not help. The moment
 and read that customer's jobs.
 
 The fix: `act_as_house` must check the Supabase auth subject against the
-customer before it sets the house — `auth.uid()` against the customer's
-`external_id`.
+customer before it sets the house — `request.jwt.claim.sub` read via
+`current_setting('request.jwt.claim.sub', true)` against the customer's
+`external_id`. Real on Supabase; settable by `set_config` in tests on plain
+Postgres — no dependency on the auth schema existing at all.
 
 **Reviewed and corrected on 26 Nov (CodeRabbit, Major): keep the trusted
 service-role path intact.** `act_as_house` is also called by the doors, by both
