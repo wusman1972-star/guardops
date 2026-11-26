@@ -32,12 +32,30 @@ REVOKE EXECUTE ON FUNCTION guardops.job_add(bigint, text) FROM PUBLIC;
 
 DO $proof$
 DECLARE
+  v_acct_id  bigint;
+  v_cust_id  bigint;
   v_link_id  bigint;
   v_job_id   bigint;
   v_count    bigint;
 BEGIN
   BEGIN
-    -- create a repo_link for the proof account (account_id = 1 via current_account stub)
+    -- set up an account and customer with ACTIVE sign-in for the proof
+    INSERT INTO guardops.account (name) VALUES ('proof-0075') RETURNING id INTO v_acct_id;
+    INSERT INTO guardops.customer (account_id, external_id)
+      VALUES (v_acct_id, 'proof-0075-ext') RETURNING id INTO v_cust_id;
+    INSERT INTO guardops.connected_account
+      (account_id, customer_id, token_secret_name, status)
+    VALUES (v_acct_id, v_cust_id, 'proof-0075-tok', 'ACTIVE');
+
+    -- sign in as this house if act_as_house is available;
+    -- skipped on schemas where it does not yet exist (older install base)
+    IF EXISTS (
+      SELECT 1 FROM information_schema.routines
+       WHERE routine_schema = 'guardops' AND routine_name = 'act_as_house'
+    ) THEN
+      PERFORM guardops.act_as_house(v_cust_id);
+    END IF;
+
     v_link_id := guardops.repo_link_add('proof-0075/test', 'main');
 
     -- open a job against that repo link
