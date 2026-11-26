@@ -64,11 +64,10 @@ BEGIN
       RETURN NEXT;
       RAISE EXCEPTION 'one_run_rollback';
     END IF;
-    v_job_id := guardops.job_add(v_db_id, 'one_run_test: deliberate wrong claim');
-    SELECT opened_at INTO v_opened_at FROM guardops.job WHERE id = v_job_id;
-
-    -- Wire a test repo_link and repo_pull so job_verdict can find commit proofs.
-    -- Both rows roll back with the subtransaction; no trace is left.
+    -- Wire a test repo_link and repo_pull FIRST: job_add's argument is a
+    -- repo_link_id, and the job row's foreign key is checked on insert, so the
+    -- link has to exist before the job (hole 864). Both rows roll back with the
+    -- subtransaction; no trace is left.
     INSERT INTO guardops.repo_link (account_id, repo, branch, linked_by, active)
     VALUES (guardops.current_account(), 'one-run-test/repo', 'main', 'TEST', false)
     RETURNING id INTO v_link_id;
@@ -77,7 +76,8 @@ BEGIN
     VALUES (guardops.current_account(), v_link_id)
     RETURNING id INTO v_pull_id;
 
-    UPDATE guardops.job SET repo_link_id = v_link_id WHERE id = v_job_id;
+    v_job_id := guardops.job_add(v_link_id, 'one_run_test: deliberate wrong claim');
+    SELECT opened_at INTO v_opened_at FROM guardops.job WHERE id = v_job_id;
 
     -- Step 3: file a plan of THREE items
     IF NOT EXISTS (
