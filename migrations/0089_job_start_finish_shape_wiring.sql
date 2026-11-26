@@ -418,7 +418,7 @@ declare
   v_added text; v_gone text; v_changed text;
   v_msg   text;
 begin
-  select * into v_pic from guardops.shape_picture where id = p_picture_id;
+  select * into v_pic from guardops.shape_picture where id = p_picture_id for update;
   if not found then raise exception 'no picture with id %', p_picture_id; end if;
   if v_pic.state <> 'DONE' then
     return 'picture ' || p_picture_id || ' is ' || v_pic.state || ', nothing to judge';
