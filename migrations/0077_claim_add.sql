@@ -90,10 +90,17 @@ BEGIN
 
     v_link_id  := guardops.repo_link_add('proof-0077/test', 'main');
     v_job_id   := guardops.job_add(v_link_id, 'proof-0077: claim_add smoke test');
-    v_plan_ids := guardops.plan_given_add(
-      v_job_id,
-      ARRAY['proof-0077 step one', 'proof-0077 step two']
-    );
+    -- plan rows written directly: guardops.plan_given_add(bigint, text[]) is not
+    -- created until 0080, so this proof may not call it (hole 863).
+    WITH ins AS (
+      INSERT INTO guardops.plan_given
+        (job_id, item_text, position, plan_version, plan_digest)
+      VALUES
+        (v_job_id, 'proof-0077 step one', 1, 1, 'proof-0077-digest'),
+        (v_job_id, 'proof-0077 step two', 2, 1, 'proof-0077-digest')
+      RETURNING id, position
+    )
+    SELECT array_agg(id ORDER BY position) INTO v_plan_ids FROM ins;
 
     -- (a) normal claim
     v_claim_id := guardops.claim_add(
