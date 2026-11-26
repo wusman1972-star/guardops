@@ -84,7 +84,7 @@ begin
      where database_id = v_pic.database_id and id < p_picture_id
        and state = 'DONE' and judged_at is not null
        and kind is distinct from 'SURVEY'
-       and watched_schema = v_pic.watched_schema;
+       and (watched_schema is null or watched_schema = v_pic.watched_schema);
   end if;
 
   if v_prev is null then
