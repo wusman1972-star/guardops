@@ -5,5 +5,7 @@ tools/cr_reviewed_head.txt
 tools/oldlogs/
 tools/batbackups/
 tools/offdesk/_cr_check/
+tools/verdicts/
 *.log
 code_log*.txt
+tools/floor/
