@@ -96,6 +96,7 @@ DECLARE
   v_acct_id    bigint;
   v_cust_id    bigint;
   v_link_id    bigint;  -- watched_database id
+  v_repo_id    bigint;
   v_job_id     bigint;
   v_ids1       bigint[];
   v_ids2       bigint[];
@@ -123,7 +124,8 @@ BEGIN
     END IF;
 
     v_link_id := guardops.watched_database_add('proof-0080/test');
-    v_job_id  := guardops.job_add(v_link_id, 'proof-0080: plan_given_add smoke test');
+    v_repo_id := guardops.repo_link_add('proof-0080/test', 'main');
+    v_job_id  := guardops.job_add(v_repo_id, 'proof-0080: plan_given_add smoke test');
 
     -- first file: two items, plan_version must be 1
     v_ids1 := guardops.plan_given_add(v_job_id, ARRAY['step one', 'step two']);
