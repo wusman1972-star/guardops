@@ -109,7 +109,9 @@ BEGIN
         WHERE sc.picture_id      = v_after_pic
           AND sc.prev_picture_id = v_before_pic
           AND sc.change_kind     = 'APPEARED'
-          AND sc.schema_name || '.' || sc.object_name = obj.name
+          -- shape_judge stores a routine as name(args) so overloads stay apart;
+          -- a claim never carries the argument list, so match on the bare name (hole 865).
+          AND sc.schema_name || '.' || split_part(sc.object_name, '(', 1) = obj.name
         LIMIT 1),
       'no shape record'
     )
@@ -127,7 +129,9 @@ BEGIN
         WHERE sc.picture_id      = v_after_pic
           AND sc.prev_picture_id = v_before_pic
           AND sc.change_kind     = 'GONE'
-          AND sc.schema_name || '.' || sc.object_name = obj.name
+          -- shape_judge stores a routine as name(args) so overloads stay apart;
+          -- a claim never carries the argument list, so match on the bare name (hole 865).
+          AND sc.schema_name || '.' || split_part(sc.object_name, '(', 1) = obj.name
         LIMIT 1),
       'no shape record'
     )
