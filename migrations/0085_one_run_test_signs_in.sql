@@ -42,6 +42,10 @@ BEGIN
       VALUES (v_acct_id, v_cust_id, 'one_run_test-tok', 'ACTIVE');
     PERFORM guardops.act_as_house(v_cust_id);
 
+    -- An object that EXISTS before the job so the DELETED line has something
+    -- real to have lost. Rolls back with the subtransaction.
+    EXECUTE 'CREATE FUNCTION guardops.fn_deleted_obj() RETURNS int LANGUAGE sql AS $q$ SELECT 1 $q$';
+
     -- Step 1: register a database to watch
     IF NOT EXISTS (
       SELECT 1 FROM information_schema.routines
@@ -76,7 +80,11 @@ BEGIN
     VALUES (guardops.current_account(), v_link_id)
     RETURNING id INTO v_pull_id;
 
-    v_job_id := guardops.job_add(v_link_id, 'one_run_test: deliberate wrong claim');
+    -- The REAL chain: job_start photographs the schema and records that picture
+    -- on the job itself, so job_verdict can find it later (hole 864).
+    v_job_id := guardops.job_start(v_db_id, v_link_id,
+                                   'one_run_test: deliberate wrong claim', 'guardops');
+    SELECT before_picture_id INTO v_before_pic FROM guardops.job WHERE id = v_job_id;
     SELECT opened_at INTO v_opened_at FROM guardops.job WHERE id = v_job_id;
 
     -- Step 3: file a plan of THREE items
@@ -94,8 +102,11 @@ BEGIN
       ARRAY['add function alpha', 'add function beta', 'add function gamma']
     );
 
-    -- Step 4: take a before picture (door exists: take_shape)
-    v_before_pic := guardops.take_shape(v_db_id, 'BEFORE');
+    -- Step 4: the before picture was taken by job_start above.
+    -- Now make the schema actually change: add one object nobody ordered,
+    -- and remove the one that existed before.
+    EXECUTE 'CREATE FUNCTION guardops.fn_surprise_added() RETURNS int LANGUAGE sql AS $q$ SELECT 2 $q$';
+    EXECUTE 'DROP FUNCTION guardops.fn_deleted_obj()';
 
     -- Step 5: record a claim (wrong on purpose)
     -- 2 of 3 items delivered, item 3 never touched,
@@ -109,12 +120,16 @@ BEGIN
       RETURN NEXT;
       RAISE EXCEPTION 'one_run_rollback';
     END IF;
-    v_claim_id := guardops.claim_add(
+    -- job_finish does the real work: takes the after picture, COMPARES it against
+    -- the before picture, records it on the job, then files the claim.
+    PERFORM guardops.job_finish(
       v_job_id,
       v_plan_items[1:2],
       ARRAY['guardops.fn_surprise_added'],
       ARRAY['guardops.fn_deleted_obj']
     );
+    SELECT after_picture_id INTO v_after_pic FROM guardops.job WHERE id = v_job_id;
+    SELECT id INTO v_claim_id FROM guardops.claim WHERE job_id = v_job_id ORDER BY id DESC LIMIT 1;
 
     -- Step 6: record the commits (NULL pull_id is a deliberate no-op in GuardOps)
     PERFORM guardops.commit_record(
@@ -126,19 +141,10 @@ BEGIN
       NULL
     );
 
-    -- Step 7: take an after picture (door exists: take_shape)
-    v_after_pic := guardops.take_shape(v_db_id, 'AFTER');
+    -- Step 7: the after picture was taken and judged by job_finish above.
 
-    -- Build shape_change rows so the ADDED and DELETED lines carry real proof text.
-    -- Rows roll back with the subtransaction.
-    INSERT INTO guardops.shape_change
-      (account_id, database_id, picture_id, prev_picture_id,
-       change_kind, schema_name, object_name, object_kind, noticed_at, noticed_by)
-    VALUES
-      (guardops.current_account(), v_db_id, v_after_pic, v_before_pic,
-       'APPEARED', 'guardops', 'fn_surprise_added', 'function', now(), 'one_run_test'),
-      (guardops.current_account(), v_db_id, v_after_pic, v_before_pic,
-       'GONE',     'guardops', 'fn_deleted_obj',    'function', now(), 'one_run_test');
+    -- NOTHING is hand-inserted into shape_change any more. The APPEARED and GONE
+    -- rows now come from shape_judge comparing the two real pictures (hole 864).
 
     -- Insert a commit BEFORE job.opened_at to prove the scoping fix: it must not be cited.
     INSERT INTO guardops.commit_seen
