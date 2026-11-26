@@ -32,6 +32,8 @@ DECLARE
   v_account_id bigint;
   v_external   text;
   v_subject    text;
+  v_claims     text;
+  v_browser    boolean := false;
   v_secret     bytea;
   v_digest     text;
   v_payload    text;
@@ -53,12 +55,34 @@ BEGIN
     RAISE EXCEPTION '[NO HOUSE] customer % has no ACTIVE sign-in', p_customer;
   END IF;
 
-  -- The caller is browser-side exactly when a JWT subject is present. Supabase
-  -- sets request.jwt.claim.sub on every call made with a user's token. The
-  -- install, the doors and the tests carry none, and are unaffected.
-  v_subject := pg_catalog.current_setting('request.jwt.claim.sub', true);
-  IF v_subject IS NOT NULL AND v_subject <> '' THEN
-    IF v_external IS NULL OR v_external <> v_subject THEN
+  -- The caller is browser-side when a JWT is present in EITHER shape.
+  -- 26 Nov, review finding: reading only request.jwt.claim.sub was a fail-open.
+  -- That is the LEGACY name, used below PostgreSQL 14 or when db-use-legacy-gucs
+  -- is on. PostgREST's documented interface for 14 and later is the JSON setting
+  -- request.jwt.claims. With only the JSON form set, the subject read as NULL,
+  -- the check below was skipped, and the door signed in as any customer asked
+  -- for - looking closed while being wide open. Both shapes are read now.
+  v_claims := pg_catalog.current_setting('request.jwt.claims', true);
+  IF v_claims IS NOT NULL AND v_claims <> '' THEN
+    v_browser := true;
+    BEGIN
+      v_subject := (v_claims::jsonb) ->> 'sub';
+    EXCEPTION WHEN OTHERS THEN
+      v_subject := NULL;   -- unreadable claims are not a free pass; see below
+    END;
+  END IF;
+
+  IF v_subject IS NULL OR v_subject = '' THEN
+    v_subject := pg_catalog.current_setting('request.jwt.claim.sub', true);
+    IF v_subject IS NOT NULL AND v_subject <> '' THEN
+      v_browser := true;
+    END IF;
+  END IF;
+
+  -- A JWT present but with no readable subject is REFUSED, never waved through.
+  IF v_browser THEN
+    IF v_subject IS NULL OR v_subject = ''
+       OR v_external IS NULL OR v_external <> v_subject THEN
       RAISE EXCEPTION
         '[NO HOUSE] the signed-in person is not customer % - a caller may only act as themselves',
         p_customer;
@@ -146,8 +170,47 @@ BEGIN
     END;
     ASSERT v_refused, 'an unknown JWT subject must be refused';
 
+    -- (5) the JSON claims shape, acting as themselves: allowed
     PERFORM pg_catalog.set_config('request.jwt.claim.sub', '', true);
-    RAISE INFO 'proof/0100: no JWT still works, self allowed, acting as another customer refused, unknown subject refused';
+    PERFORM pg_catalog.set_config('request.jwt.claims',
+      '{"sub":"proof-0100-A-sub","role":"authenticated"}', true);
+    v_got := guardops.act_as_house(v_a_cust);
+    ASSERT v_got = v_a_acct,
+      'the JSON claims shape acting as themselves must be allowed, got ' || COALESCE(v_got::text,'<null>');
+
+    -- (6) the JSON claims shape, asking to be someone else: refused
+    v_refused := false;
+    BEGIN
+      PERFORM guardops.act_as_house(v_b_cust);
+    EXCEPTION WHEN OTHERS THEN
+      v_refused := true;
+    END;
+    ASSERT v_refused,
+      'the JSON claims shape asking to act as another customer MUST be refused';
+
+    -- (7) a token present but with no readable subject: refused, never waved through
+    PERFORM pg_catalog.set_config('request.jwt.claims', '{"role":"authenticated"}', true);
+    v_refused := false;
+    BEGIN
+      PERFORM guardops.act_as_house(v_a_cust);
+    EXCEPTION WHEN OTHERS THEN
+      v_refused := true;
+    END;
+    ASSERT v_refused, 'a JWT with no sub must be refused, not treated as trusted';
+
+    -- (8) unreadable claims: refused too
+    PERFORM pg_catalog.set_config('request.jwt.claims', 'not json at all', true);
+    v_refused := false;
+    BEGIN
+      PERFORM guardops.act_as_house(v_a_cust);
+    EXCEPTION WHEN OTHERS THEN
+      v_refused := true;
+    END;
+    ASSERT v_refused, 'unreadable claims must be refused, not treated as trusted';
+
+    PERFORM pg_catalog.set_config('request.jwt.claims', '', true);
+    PERFORM pg_catalog.set_config('request.jwt.claim.sub', '', true);
+    RAISE INFO 'proof/0100: no JWT still works; self allowed and impersonation refused in BOTH the legacy and the JSON claims shape; a token with no readable sub refused';
     RAISE EXCEPTION 'proof/0100/rollback';
 
   EXCEPTION WHEN OTHERS THEN
