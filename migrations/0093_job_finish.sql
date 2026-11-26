@@ -31,7 +31,8 @@ BEGIN
     INTO v_db_id, v_schema, v_before_pic, v_after_existing
     FROM guardops.job j
    WHERE j.id = p_job_id
-     AND j.account_id = guardops.current_account();
+     AND j.account_id = guardops.current_account()
+   FOR UPDATE;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'job % not found or does not belong to this account', p_job_id;
