@@ -58,15 +58,18 @@ BEGIN
     pass := (v_link_id IS NOT NULL);
     RETURN NEXT;
 
-    -- Step 4: open a job
-    v_job_id := guardops.job_add(v_db_id, 'whole_run_test');
+    -- Step 4: open a job with job_start, the real door. The watched schema has to
+    -- exist before it is photographed, so it is created here with one object in it.
+    EXECUTE 'CREATE SCHEMA whole_run_test_work';
+    EXECUTE 'CREATE TABLE whole_run_test_work.already_there (id bigint)';
+    v_job_id := guardops.job_start(v_db_id, v_link_id, 'whole_run_test', 'whole_run_test_work');
     step := 4; what := 'open a job';
     got  := 'job id ' || v_job_id::text;
     want := 'a job id';
     pass := (v_job_id IS NOT NULL);
     RETURN NEXT;
 
-    -- Step 5: the job is joined to the code — FAILS TODAY (job_add does not set repo_link_id)
+    -- Step 5: the job is joined to the code, recorded by job_start.
     SELECT j.repo_link_id INTO v_link_on_job
       FROM guardops.job j WHERE j.id = v_job_id;
     step := 5; what := 'job carries a code link';
@@ -77,8 +80,8 @@ BEGIN
     pass := (v_link_on_job IS NOT NULL);
     RETURN NEXT;
 
-    -- Step 6: photograph the database before
-    v_before_pic := guardops.take_shape(v_db_id,'whole_run_test_work','CONNECTION');
+    -- Step 6: job_start already took the before picture and recorded it on the job.
+    SELECT j.before_picture_id INTO v_before_pic FROM guardops.job j WHERE j.id = v_job_id;
     step := 6; what := 'take before picture';
     got  := 'picture id ' || v_before_pic::text;
     want := 'a before picture id';
@@ -86,7 +89,6 @@ BEGIN
     RETURN NEXT;
 
     -- Step 7: build something new inside the watched schema (standing in for AI work)
-    EXECUTE 'CREATE SCHEMA whole_run_test_work';
     EXECUTE 'CREATE TABLE whole_run_test_work.new_table (id bigint)';
     step := 7; what := 'build new object in watched schema';
     got  := 'created whole_run_test_work.new_table';
@@ -94,15 +96,26 @@ BEGIN
     pass := true;
     RETURN NEXT;
 
-    -- Step 8: photograph the database after
-    v_after_pic := guardops.take_shape(v_db_id,'whole_run_test_work','CONNECTION');
+    -- Step 8: file the plan, then let job_finish take the after picture, COMPARE it
+    -- against the before picture, record it on the job and file the claim.
+    v_plan_items := guardops.plan_given_add(
+      v_job_id,
+      ARRAY['build whole_run_test_work.new_table']
+    );
+    PERFORM guardops.job_finish(
+      v_job_id,
+      v_plan_items,
+      ARRAY['whole_run_test_work.new_table'],
+      ARRAY[]::text[]
+    );
+    SELECT j.after_picture_id INTO v_after_pic FROM guardops.job j WHERE j.id = v_job_id;
     step := 8; what := 'take after picture';
     got  := 'picture id ' || v_after_pic::text;
     want := 'an after picture id';
     pass := (v_after_pic IS NOT NULL);
     RETURN NEXT;
 
-    -- Step 9: the difference was spotted — FAILS TODAY (no auto shape comparison)
+    -- Step 9: the difference was spotted by shape_judge inside job_finish
     SELECT count(*) INTO v_sc_count
       FROM guardops.shape_change WHERE database_id = v_db_id;
     step := 9; what := 'shape change detected';
@@ -127,26 +140,16 @@ BEGIN
     pass := (v_commit_id IS NOT NULL AND v_commit_id > 0);
     RETURN NEXT;
 
-    -- Step 11: file the plan and the claim, naming the built object
-    v_plan_items := guardops.plan_given_add(
-      v_job_id,
-      ARRAY['build whole_run_test_work.new_table']
-    );
-    v_claim_id := guardops.claim_add(
-      v_job_id,
-      v_plan_items,
-      ARRAY['whole_run_test_work.new_table'],
-      ARRAY[]::text[]
-    );
+    -- Step 11: the plan and the claim were filed at step 8 by job_finish.
+    SELECT id INTO v_claim_id FROM guardops.claim
+     WHERE job_id = v_job_id ORDER BY id DESC LIMIT 1;
     step := 11; what := 'file plan and claim';
     got  := 'claim id ' || v_claim_id::text;
     want := 'a claim id';
     pass := (v_claim_id IS NOT NULL);
     RETURN NEXT;
 
-    -- Step 12: the four lines carry real proof — FAILS TODAY
-    -- job.repo_link_id is null so DELIVERED rows read 'no commit record';
-    -- shape_change is empty so ADDED rows read 'no shape record'.
+    -- Step 12: the four lines carry real proof. The job carries its code link and both pictures, and shape_change was written by the comparison (hole 864).
     SELECT count(*) INTO v_bad_proof
       FROM guardops.job_verdict(v_job_id)
      WHERE proof IN ('no commit record', 'no shape record');
