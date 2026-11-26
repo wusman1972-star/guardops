@@ -129,7 +129,8 @@ BEGIN
                jsonb_build_object(
                    'returns', pg_catalog.pg_get_function_result(p.oid),
                    'args',    pg_catalog.pg_get_function_arguments(p.oid),
-                   'body',    pg_catalog.pg_get_functiondef(p.oid)
+                   'body',    pg_catalog.pg_get_functiondef(p.oid),
+                   'idargs',  pg_catalog.pg_get_function_identity_arguments(p.oid)
                ),
                0::bigint,
                0::bigint
@@ -217,7 +218,8 @@ BEGIN
                    jsonb_build_object(
                        'returns', pg_get_function_result(p.oid),
                        'args',    pg_get_function_arguments(p.oid),
-                       'body',    pg_get_functiondef(p.oid)
+                       'body',    pg_get_functiondef(p.oid),
+                       'idargs',  pg_get_function_identity_arguments(p.oid)
                    ),
                    0::bigint,
                    0::bigint
@@ -495,7 +497,11 @@ begin
                       where o.picture_id = v_prev and o.object_kind is distinct from 'trigger'
                         and o.schema_name = n.schema_name and o.object_name = n.object_name
                         and o.object_kind = n.object_kind
-                        and (n.object_kind <> 'function' or o.column_shape->>'args' = n.column_shape->>'args'))
+                        and (n.object_kind <> 'function' or
+                             case when o.column_shape ? 'idargs' and n.column_shape ? 'idargs'
+                                  then o.column_shape->>'idargs' = n.column_shape->>'idargs'
+                                  else o.column_shape->>'args'   = n.column_shape->>'args'
+                             end))
   on conflict (picture_id, change_kind, schema_name, object_name) do nothing;
 
   insert into guardops.shape_change
@@ -511,7 +517,11 @@ begin
                       where n.picture_id = p_picture_id and n.object_kind is distinct from 'trigger'
                         and n.schema_name = o.schema_name and n.object_name = o.object_name
                         and n.object_kind = o.object_kind
-                        and (o.object_kind <> 'function' or n.column_shape->>'args' = o.column_shape->>'args'))
+                        and (o.object_kind <> 'function' or
+                             case when o.column_shape ? 'idargs' and n.column_shape ? 'idargs'
+                                  then o.column_shape->>'idargs' = n.column_shape->>'idargs'
+                                  else o.column_shape->>'args'   = n.column_shape->>'args'
+                             end))
   on conflict (picture_id, change_kind, schema_name, object_name) do nothing;
 
   insert into guardops.shape_change
@@ -526,9 +536,13 @@ begin
          and q.schema_name = n.schema_name and q.object_name = n.object_name
          and q.object_kind = n.object_kind
          and q.object_kind is distinct from 'trigger'
-         and (n.object_kind <> 'function' or q.column_shape->>'args' = n.column_shape->>'args')
+         and (n.object_kind <> 'function' or
+              case when q.column_shape ? 'idargs' and n.column_shape ? 'idargs'
+                   then q.column_shape->>'idargs' = n.column_shape->>'idargs'
+                   else q.column_shape->>'args'   = n.column_shape->>'args'
+              end)
    where n.picture_id = p_picture_id and n.object_kind is distinct from 'trigger'
-     and n.column_shape is distinct from q.column_shape
+     and (n.column_shape - 'idargs') is distinct from (q.column_shape - 'idargs')
   on conflict (picture_id, change_kind, schema_name, object_name) do nothing;
 
   select string_agg(schema_name||'.'||object_name, ', ') into v_added from (
