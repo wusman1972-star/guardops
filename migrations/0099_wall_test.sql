@@ -75,6 +75,11 @@ BEGIN
 
     -- ── a reader with no bypass of its own ──────────────────────────────────
     CREATE ROLE guardops_wall_probe NOLOGIN;
+    -- 26 Nov, review finding: on PostgreSQL 17 a non-superuser owner with
+    -- CREATEROLE is given automatic membership in a role it creates with SET
+    -- FALSE, so SET LOCAL ROLE below is DENIED and none of the isolation checks
+    -- run. Granting membership WITH SET TRUE explicitly works on 16 and 17 both.
+    EXECUTE format('GRANT guardops_wall_probe TO %I WITH SET TRUE', current_user);
     GRANT USAGE ON SCHEMA guardops TO guardops_wall_probe;
     GRANT EXECUTE ON FUNCTION guardops.current_account_or_null(boolean) TO guardops_wall_probe;
     GRANT SELECT ON guardops.job, guardops.plan_given, guardops.watched_database,
