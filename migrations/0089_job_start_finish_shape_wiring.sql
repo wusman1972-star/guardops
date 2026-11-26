@@ -358,14 +358,15 @@ CREATE OR REPLACE FUNCTION guardops.job_finish(
   SET search_path TO ''
 AS $$
 DECLARE
-  v_db_id      bigint;
-  v_schema     text;
-  v_before_pic bigint;
-  v_after      bigint;
-  v_count      bigint;
+  v_db_id         bigint;
+  v_schema        text;
+  v_before_pic    bigint;
+  v_after_existing bigint;
+  v_after         bigint;
+  v_count         bigint;
 BEGIN
-  SELECT j.watched_database_id, j.watched_schema, j.before_picture_id
-    INTO v_db_id, v_schema, v_before_pic
+  SELECT j.watched_database_id, j.watched_schema, j.before_picture_id, j.after_picture_id
+    INTO v_db_id, v_schema, v_before_pic, v_after_existing
     FROM guardops.job j
    WHERE j.id = p_job_id
      AND j.account_id = guardops.current_account();
@@ -376,6 +377,10 @@ BEGIN
 
   IF v_before_pic IS NULL THEN
     RAISE EXCEPTION 'job % has no before picture — was not opened with job_start', p_job_id;
+  END IF;
+
+  IF v_after_existing IS NOT NULL THEN
+    RAISE EXCEPTION 'job % already finished with after picture % - job_finish may not be called twice', p_job_id, v_after_existing;
   END IF;
 
   v_after := guardops.take_shape(v_db_id, v_schema);
