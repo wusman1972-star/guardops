@@ -1,7 +1,0 @@
-===== base 1aca6ffc8879f851c9506c53b6a8e428074b3616 ===== 
-===== scope migrations ===== 
-{"type":"review_context","reviewType":"all","currentBranch":"board-11687","baseBranch":"master","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
-{"type":"status","phase":"setup","status":"setting_up","message":"wusman1972-star/guardops is not connected to a CodeRabbit organization you can access, so this review will use the free CLI allowance.\n\nIf you expected an org plan here, check your signed-in account with coderabbit auth status, or install CodeRabbit for wusman1972-star/guardops at https://app.coderabbit.ai"}
-{"type":"heartbeat","status":"reviewing"}
-{"type":"heartbeat","status":"reviewing"}
-{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["migrations/0014_plan_given.sql","migrations/0015_plan_given_truncate_guard.sql"],"outcome":"completed","message":"Review completed"}

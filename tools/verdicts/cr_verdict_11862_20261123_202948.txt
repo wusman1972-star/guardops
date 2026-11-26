@@ -1,8 +1,0 @@
-===== base 1783968e99abf8a2952ee5149bdbc8ef5aa608fd ===== 
-SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11857_20261123_200934.txt
-SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11860_20261123_201715.txt
-===== scope migrations ===== 
-{"type":"review_context","reviewType":"all","currentBranch":"board-11862","baseBranch":"master","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
-{"type":"heartbeat","status":"reviewing"}
-{"type":"heartbeat","status":"reviewing"}
-{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["migrations/0052_pull_begin.sql","migrations/0053_pull_abort.sql","migrations/0054_svc_open_pull.sql","migrations/0055_svc_pull_sighted_shas.sql"],"outcome":"completed","message":"Review completed"}

@@ -1,6 +1,0 @@
-===== base b659a2e96af5a70e46d7967e8473e4448af0b602 ===== 
-SKIPPED [reviewer state file]: tools/verdicts/cr_verdict_11830_20261123_180155.txt
-===== scope migrations ===== 
-{"type":"review_context","reviewType":"all","currentBranch":"board-11831","baseBranch":"master","workingDirectory":"C:/Users/T480/Desktop/guardops-install/migrations","expectedDuration":"Reviews usually take 2-6 minutes and can take up to 15. Keep this command running for at least 15 minutes or run it in the background; stopping it early discards the review."}
-{"type":"error","errorType":"rate_limit","message":"Rate limit exceeded","recoverable":true,"details":{},"metadata":{"isProUser":false,"waitTime":"9 minutes and 57 seconds","policyGuidance":"**Limit details:** You’ve used all 3 included reviews currently available.\n\nYou've used all free CLI reviews for now. CodeRabbit can't apply an organization plan until this repository is connected to CodeRabbit. Add and push a Git remote if needed. Install CodeRabbit for this repository in the [CodeRabbit dashboard](https://app.coderabbit.ai), or wait for the free limit to reset.\n\n[Check out review usage here](https://app.coderabbit.ai/dashboard/review-capacity)."}}
-Error: An unexpected error occurred.
