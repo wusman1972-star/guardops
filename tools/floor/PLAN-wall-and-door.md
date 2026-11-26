@@ -4,7 +4,14 @@ Database: **mfysxqhediepzohzhufp**, schema `guardops`. Not the old floor.
 
 Cold-read by Code on 26 Nov (report: board 12114). Jobs 1–3 came back clean on
 all six questions. Job 4 came back with a real hole, now written in below as its
-own job. Order is not negotiable.
+own job. CodeRabbit then raised three Major findings on this plan itself, all
+three accepted and folded into jobs 3 and 4. Order is not negotiable.
+
+**How every job here is proved:** installed from GitHub master into a brand new
+empty Postgres 16, every migration in order, then both self-tests — and then a
+second run in that same, now non-empty, database. `0035_pg_net.sql` is the one
+permitted failure: `pg_net` is Supabase-only, so a green install on plain
+Postgres is 87 of 88, not 88 of 88. Nothing else may fail.
 
 ## Why
 
@@ -62,14 +69,30 @@ table needs a SELECT/write split.
 ## Job 3 — the test that makes it real
 
 The only reason to believe any of the above. One new function, one rolled-back
-block, numbered rows with pass true/false in the same shape as `one_run_test`:
+block, numbered rows with pass true/false in the same shape as `one_run_test`.
 
-1. Sign in as customer A, write a job and a plan row.
+**Reviewed and corrected on 26 Nov (CodeRabbit, 3 Major on the first draft of
+this plan). Both corrections matter more than the rest of the job:**
+
+- **Seed a row in every table whose separation is being tested.** A zero count
+  proves nothing if the table was empty anyway — that is exactly the mistake
+  that let both self-tests read green for weeks. Customer A must genuinely own
+  at least one row in each table the test checks, and the test must assert that
+  row exists as A before it ever signs in as B.
+- **Use a dedicated test role with no bypass, not `authenticated`.** Create a
+  throwaway NOLOGIN role for the test, `SET LOCAL ROLE` to it, and prove it has
+  no BYPASSRLS and no table grant. `authenticated` carries whatever Supabase
+  gives it, which is not a controlled starting point.
+
+The steps:
+
+1. Sign in as customer A and write a row into **every** table under test — not
+   just a job and a plan row. Assert each one is visible to A.
 2. Sign in as customer B.
-3. `SET LOCAL ROLE authenticated` and try to read A's rows, table by table —
-   every count must be **zero**.
-4. Prove a direct `SELECT` as authenticated is refused outright for want of a
-   grant.
+3. `SET LOCAL ROLE` to the no-bypass test role and read A's rows table by
+   table — every count must be **zero**, against tables that are known not to
+   be empty.
+4. Prove a direct `SELECT` as that role is refused outright for want of a grant.
 5. Sign back in as A and prove A still sees A's own rows — the wall must not
    lock the owner out.
 
@@ -86,7 +109,15 @@ and read that customer's jobs.
 
 The fix: `act_as_house` must check the Supabase auth subject against the
 customer before it sets the house — `auth.uid()` against the customer's
-`external_id`. Its own test: a caller signed in as A asking for B is refused.
+`external_id`.
+
+**Reviewed and corrected on 26 Nov (CodeRabbit, Major): keep the trusted
+service-role path intact.** `act_as_house` is also called by the doors, by both
+self-tests and by every migration's own proof, none of which carry a JWT. An
+unconditional check breaks all of them. So the identity check fires only for a
+browser-side caller and the service-role path is left exactly as it is. Its own
+test proves both halves: a caller signed in as A asking for B is refused, and a
+service-role call with no JWT at all still works.
 
 ## Job 5 — open the way in
 
