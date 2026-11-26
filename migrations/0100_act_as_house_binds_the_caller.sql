@@ -33,6 +33,7 @@ DECLARE
   v_external   text;
   v_subject    text;
   v_claims     text;
+  v_provider   text;
   v_browser    boolean := false;
   v_secret     bytea;
   v_digest     text;
@@ -40,7 +41,8 @@ DECLARE
   v_sig        bytea;
   v_hex_sig    text;
 BEGIN
-  SELECT c.account_id, c.external_id INTO v_account_id, v_external
+  SELECT c.account_id, c.external_id, c.provider
+    INTO v_account_id, v_external, v_provider
     FROM guardops.customer c
    WHERE c.id = p_customer;
   IF NOT FOUND THEN
@@ -55,33 +57,45 @@ BEGIN
     RAISE EXCEPTION '[NO HOUSE] customer % has no ACTIVE sign-in', p_customer;
   END IF;
 
-  -- The caller is browser-side when a JWT is present in EITHER shape.
-  -- 26 Nov, review finding: reading only request.jwt.claim.sub was a fail-open.
-  -- That is the LEGACY name, used below PostgreSQL 14 or when db-use-legacy-gucs
-  -- is on. PostgREST's documented interface for 14 and later is the JSON setting
-  -- request.jwt.claims. With only the JSON form set, the subject read as NULL,
-  -- the check below was skipped, and the door signed in as any customer asked
-  -- for - looking closed while being wide open. Both shapes are read now.
-  v_claims := pg_catalog.current_setting('request.jwt.claims', true);
-  IF v_claims IS NOT NULL AND v_claims <> '' THEN
-    v_browser := true;
-    BEGIN
-      v_subject := (v_claims::jsonb) ->> 'sub';
-    EXCEPTION WHEN OTHERS THEN
-      v_subject := NULL;   -- unreadable claims are not a free pass; see below
-    END;
-  END IF;
+  -- WHO IS BROWSER-SIDE IS DECIDED BY THE ROLE, NOT BY THE PRESENCE OF A TOKEN.
+  -- 26 Nov, review finding: the first version treated any non-empty
+  -- request.jwt.claims as browser-side. A service_role token also carries
+  -- claims and has no sub, so every trusted backend call would have been
+  -- refused for every customer - breaking the workflow this door exists for.
+  -- PostgREST sets the database role from the token, so current_user is the
+  -- honest test and a token cannot talk its way around it.
+  -- CURRENT_USER is NOT usable here: inside a SECURITY DEFINER function it is
+  -- the function's owner, never the caller. SESSION_USER is the connection role
+  -- (authenticator), not the role the gateway switched to. The role GUC is what
+  -- SET ROLE writes, it is untouched by the definer, and PostgREST sets it from
+  -- the token on every request - so it is the honest signal for who is calling.
+  v_browser := pg_catalog.current_setting('role', true) IN ('authenticated', 'anon');
 
-  IF v_subject IS NULL OR v_subject = '' THEN
-    v_subject := pg_catalog.current_setting('request.jwt.claim.sub', true);
-    IF v_subject IS NOT NULL AND v_subject <> '' THEN
-      v_browser := true;
-    END IF;
-  END IF;
-
-  -- A JWT present but with no readable subject is REFUSED, never waved through.
   IF v_browser THEN
+    -- Read the subject from BOTH shapes. request.jwt.claims is PostgREST's
+    -- documented interface on PostgreSQL 14 and later; request.jwt.claim.sub is
+    -- the legacy name. Reading only the legacy one was a fail-open: on a modern
+    -- gateway the subject came back NULL, the check was skipped, and the door
+    -- signed in as any customer asked for.
+    v_claims := pg_catalog.current_setting('request.jwt.claims', true);
+    IF v_claims IS NOT NULL AND v_claims <> '' THEN
+      BEGIN
+        v_subject := (v_claims::jsonb) ->> 'sub';
+      EXCEPTION WHEN OTHERS THEN
+        v_subject := NULL;   -- unreadable claims are not a free pass
+      END;
+    END IF;
+    IF v_subject IS NULL OR v_subject = '' THEN
+      v_subject := pg_catalog.current_setting('request.jwt.claim.sub', true);
+    END IF;
+
+    -- A browser identity is a SUPABASE identity. 26 Nov, review finding: the
+    -- customer table is unique on (provider, external_id), not on external_id
+    -- alone, so a row under another provider could share an external_id with a
+    -- Supabase subject and be acted as. The provider is compared too.
+    -- A token with no readable subject is REFUSED, never waved through.
     IF v_subject IS NULL OR v_subject = ''
+       OR v_provider IS DISTINCT FROM 'supabase'
        OR v_external IS NULL OR v_external <> v_subject THEN
       RAISE EXCEPTION
         '[NO HOUSE] the signed-in person is not customer % - a caller may only act as themselves',
@@ -135,82 +149,102 @@ BEGIN
       (account_id, customer_id, token_secret_name, status)
       VALUES (v_b_acct, v_b_cust, 'proof-0100-B-tok', 'ACTIVE');
 
-    -- (1) the trusted path: no JWT at all, nothing changes
+    -- (1) the trusted path: postgres, no JWT - nothing changes
+    PERFORM pg_catalog.set_config('request.jwt.claims', '', true);
     PERFORM pg_catalog.set_config('request.jwt.claim.sub', '', true);
     v_got := guardops.act_as_house(v_a_cust);
     ASSERT v_got = v_a_acct,
-      'with no JWT the door must still work, wanted ' || v_a_acct || ' got ' || COALESCE(v_got::text,'<null>');
+      'the trusted path must still work, wanted ' || v_a_acct || ' got ' || COALESCE(v_got::text,'<null>');
 
-    -- (2) a browser caller acting as themselves: allowed
-    PERFORM pg_catalog.set_config('request.jwt.claim.sub', 'proof-0100-A-sub', true);
+    -- (2) the trusted path with a service_role-shaped token that has NO sub:
+    --     still works. This is the case the first version broke.
+    PERFORM pg_catalog.set_config('request.jwt.claims', '{"role":"service_role"}', true);
     v_got := guardops.act_as_house(v_a_cust);
     ASSERT v_got = v_a_acct,
-      'a caller acting as themselves must be allowed, got ' || COALESCE(v_got::text,'<null>');
+      'a service_role token with no sub must still be trusted, got ' || COALESCE(v_got::text,'<null>');
 
-    -- (3) THE HOLE: a browser caller asking to be someone else: refused
-    PERFORM pg_catalog.set_config('request.jwt.claim.sub', 'proof-0100-A-sub', true);
+    -- the browser cases are run AS the authenticated role, because that is what
+    -- decides browser-side now. It needs execute for the length of the proof.
+    GRANT USAGE ON SCHEMA guardops TO authenticated;
+    GRANT EXECUTE ON FUNCTION guardops.act_as_house(bigint) TO authenticated;
+
+    -- (3) browser, JSON claims, acting as themselves: allowed
+    PERFORM pg_catalog.set_config('request.jwt.claims',
+      '{"sub":"proof-0100-A-sub","role":"authenticated"}', true);
+    SET LOCAL ROLE authenticated;
+    v_got := guardops.act_as_house(v_a_cust);
+    RESET ROLE;
+    ASSERT v_got = v_a_acct,
+      'a browser caller acting as themselves must be allowed, got ' || COALESCE(v_got::text,'<null>');
+
+    -- (4) browser, JSON claims, acting as ANOTHER customer: refused
+    SET LOCAL ROLE authenticated;
     v_refused := false;
     BEGIN
       PERFORM guardops.act_as_house(v_b_cust);
     EXCEPTION WHEN OTHERS THEN
       v_refused := true; v_msg := SQLERRM;
     END;
-    ASSERT v_refused,
-      'a caller asking to act as another customer MUST be refused';
+    RESET ROLE;
+    ASSERT v_refused, 'a browser caller asking to act as another customer MUST be refused';
     ASSERT v_msg LIKE '%may only act as themselves%',
       'the refusal must say why, got: ' || COALESCE(v_msg,'<null>');
 
-    -- (4) a browser caller with a subject that matches nobody: refused
-    PERFORM pg_catalog.set_config('request.jwt.claim.sub', 'proof-0100-nobody', true);
-    v_refused := false;
-    BEGIN
-      PERFORM guardops.act_as_house(v_a_cust);
-    EXCEPTION WHEN OTHERS THEN
-      v_refused := true;
-    END;
-    ASSERT v_refused, 'an unknown JWT subject must be refused';
-
-    -- (5) the JSON claims shape, acting as themselves: allowed
-    PERFORM pg_catalog.set_config('request.jwt.claim.sub', '', true);
-    PERFORM pg_catalog.set_config('request.jwt.claims',
-      '{"sub":"proof-0100-A-sub","role":"authenticated"}', true);
+    -- (5) browser, legacy shape, acting as themselves: allowed
+    PERFORM pg_catalog.set_config('request.jwt.claims', '', true);
+    PERFORM pg_catalog.set_config('request.jwt.claim.sub', 'proof-0100-A-sub', true);
+    SET LOCAL ROLE authenticated;
     v_got := guardops.act_as_house(v_a_cust);
-    ASSERT v_got = v_a_acct,
-      'the JSON claims shape acting as themselves must be allowed, got ' || COALESCE(v_got::text,'<null>');
+    RESET ROLE;
+    ASSERT v_got = v_a_acct, 'the legacy shape acting as themselves must be allowed';
 
-    -- (6) the JSON claims shape, asking to be someone else: refused
-    v_refused := false;
-    BEGIN
-      PERFORM guardops.act_as_house(v_b_cust);
-    EXCEPTION WHEN OTHERS THEN
-      v_refused := true;
-    END;
-    ASSERT v_refused,
-      'the JSON claims shape asking to act as another customer MUST be refused';
-
-    -- (7) a token present but with no readable subject: refused, never waved through
+    -- (6) browser, a token with no readable subject: refused
+    PERFORM pg_catalog.set_config('request.jwt.claim.sub', '', true);
     PERFORM pg_catalog.set_config('request.jwt.claims', '{"role":"authenticated"}', true);
+    SET LOCAL ROLE authenticated;
     v_refused := false;
     BEGIN
       PERFORM guardops.act_as_house(v_a_cust);
     EXCEPTION WHEN OTHERS THEN
       v_refused := true;
     END;
-    ASSERT v_refused, 'a JWT with no sub must be refused, not treated as trusted';
+    RESET ROLE;
+    ASSERT v_refused, 'a browser token with no sub must be refused, not treated as trusted';
 
-    -- (8) unreadable claims: refused too
+    -- (7) browser, unreadable claims: refused
     PERFORM pg_catalog.set_config('request.jwt.claims', 'not json at all', true);
+    SET LOCAL ROLE authenticated;
     v_refused := false;
     BEGIN
       PERFORM guardops.act_as_house(v_a_cust);
     EXCEPTION WHEN OTHERS THEN
       v_refused := true;
     END;
+    RESET ROLE;
     ASSERT v_refused, 'unreadable claims must be refused, not treated as trusted';
 
+    -- (8) browser, right subject but the customer is under ANOTHER provider:
+    --     refused. A browser identity is a supabase identity.
+    UPDATE guardops.customer SET provider = 'github' WHERE id = v_a_cust;
+    PERFORM pg_catalog.set_config('request.jwt.claims',
+      '{"sub":"proof-0100-A-sub","role":"authenticated"}', true);
+    SET LOCAL ROLE authenticated;
+    v_refused := false;
+    BEGIN
+      PERFORM guardops.act_as_house(v_a_cust);
+    EXCEPTION WHEN OTHERS THEN
+      v_refused := true;
+    END;
+    RESET ROLE;
+    ASSERT v_refused,
+      'a matching subject on a non-supabase provider row must be refused';
+    UPDATE guardops.customer SET provider = 'supabase' WHERE id = v_a_cust;
+
+    REVOKE EXECUTE ON FUNCTION guardops.act_as_house(bigint) FROM authenticated;
+    REVOKE USAGE ON SCHEMA guardops FROM authenticated;
     PERFORM pg_catalog.set_config('request.jwt.claims', '', true);
     PERFORM pg_catalog.set_config('request.jwt.claim.sub', '', true);
-    RAISE INFO 'proof/0100: no JWT still works; self allowed and impersonation refused in BOTH the legacy and the JSON claims shape; a token with no readable sub refused';
+    RAISE INFO 'proof/0100: trusted callers unaffected including a service_role token with no sub; browser callers may act only as themselves, in both token shapes; no-sub, unreadable and wrong-provider all refused';
     RAISE EXCEPTION 'proof/0100/rollback';
 
   EXCEPTION WHEN OTHERS THEN
