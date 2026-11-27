@@ -43,31 +43,58 @@ GRANT EXECUTE ON FUNCTION guardops.page_lines(bigint) TO service_role;
 
 DO $proof$
 DECLARE
-  r         record;
-  v_count   int;
-  v_match   int;
-  v_refused boolean;
-  v_msg     text;
-  v_one     int;
-  v_whole   int;
-  v_wall    int;
+  v_acct_id    bigint;
+  v_cust_id    bigint;
+  v_db_id      bigint;
+  v_link_id    bigint;
+  v_job_id     bigint;
+  v_plan_items bigint[];
+  v_count      int;
+  v_match      int;
+  v_refused    boolean;
+  v_msg        text;
+  v_one        int;
+  v_whole      int;
+  v_wall       int;
+  r            record;
 BEGIN
   BEGIN
 
-    -- Proof 1: page_lines(132) with the job id alone returns seven rows; show all headings
-    SELECT count(*) INTO v_count FROM guardops.page_lines(132);
+    -- fixture: throwaway account, customer, database, repo link, job
+    INSERT INTO guardops.account(name) VALUES('0119_proof') RETURNING id INTO v_acct_id;
+    INSERT INTO guardops.customer(account_id, external_id)
+      VALUES(v_acct_id, '0119_proof') RETURNING id INTO v_cust_id;
+    INSERT INTO guardops.connected_account
+      (account_id, customer_id, token_secret_name, status)
+      VALUES(v_acct_id, v_cust_id, '0119-proof-tok', 'ACTIVE');
+    PERFORM guardops.act_as_house(v_cust_id);
+
+    v_db_id := guardops.watched_database_add('0119_proof_db');
+
+    INSERT INTO guardops.repo_link
+      (account_id, repo, branch, linked_by, active)
+    VALUES
+      (guardops.current_account(), '0119-proof/repo', 'main', 'TEST', false)
+    RETURNING id INTO v_link_id;
+
+    v_job_id     := guardops.job_start(v_db_id, v_link_id, '0119 proof fixture', 'guardops');
+    v_plan_items := guardops.plan_given_add(v_job_id, ARRAY['build the proof fixture table']);
+    PERFORM guardops.job_finish(v_job_id, v_plan_items, ARRAY[]::text[], ARRAY[]::text[]);
+
+    -- Proof 1: one-argument door returns seven rows; show headings
+    SELECT count(*) INTO v_count FROM guardops.page_lines(v_job_id);
     RAISE NOTICE 'proof_1  row_count  got=%  want=7  pass=%', v_count, (v_count = 7);
     IF v_count <> 7 THEN
-      RAISE EXCEPTION '0119 proof 1 failed: page_lines(132) returned % rows, want 7', v_count;
+      RAISE EXCEPTION '0119 proof 1 failed: page_lines(v_job_id) returned % rows, want 7', v_count;
     END IF;
-    FOR r IN SELECT line_no, heading FROM guardops.page_lines(132) ORDER BY line_no LOOP
+    FOR r IN SELECT line_no, heading FROM guardops.page_lines(v_job_id) ORDER BY line_no LOOP
       RAISE NOTICE 'proof_1  line=%  heading="%"', r.line_no, r.heading;
     END LOOP;
 
-    -- Proof 2: row-for-row identical to page_lines(175, 132)
+    -- Proof 2: row-for-row identical to two-argument call; show comparison
     SELECT count(*) INTO v_match
-      FROM guardops.page_lines(132)       AS a
-      JOIN guardops.page_lines(175, 132)  AS b ON a.line_no = b.line_no
+      FROM guardops.page_lines(v_job_id)            AS a
+      JOIN guardops.page_lines(v_cust_id, v_job_id) AS b ON a.line_no = b.line_no
      WHERE a.heading = b.heading
        AND a.body    = b.body
        AND a.proof   = b.proof;
@@ -75,10 +102,10 @@ BEGIN
     FOR r IN
       SELECT a.line_no,
              (a.heading = b.heading AND a.body = b.body AND a.proof = b.proof) AS same,
-             a.heading  AS one_arg_heading,
-             b.heading  AS two_arg_heading
-        FROM guardops.page_lines(132)      AS a
-        JOIN guardops.page_lines(175, 132) AS b ON a.line_no = b.line_no
+             a.heading AS one_arg_heading,
+             b.heading AS two_arg_heading
+        FROM guardops.page_lines(v_job_id)            AS a
+        JOIN guardops.page_lines(v_cust_id, v_job_id) AS b ON a.line_no = b.line_no
        ORDER BY a.line_no
     LOOP
       RAISE NOTICE 'proof_2  line=%  same=%  heading="%"', r.line_no, r.same, r.one_arg_heading;
@@ -87,13 +114,13 @@ BEGIN
       RAISE EXCEPTION '0119 proof 2 failed: only % of 7 rows match', v_match;
     END IF;
 
-    -- Proof 3: non-existent job raises a plain not-found, not [NO HOUSE], not empty
+    -- Proof 3: non-existent job id raises a plain not-found, not [NO HOUSE]
     v_refused := false;
     BEGIN
       PERFORM guardops.page_lines(999999999);
     EXCEPTION WHEN OTHERS THEN
       v_refused := true;
-      v_msg := SQLERRM;
+      v_msg     := SQLERRM;
     END;
     RAISE NOTICE 'proof_3  raised=%  msg="%"  no_house=%  pass=%',
       v_refused, v_msg,
