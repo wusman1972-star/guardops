@@ -11,8 +11,18 @@ $br = 'line'
 $cur = (git rev-parse --abbrev-ref HEAD 2>&1 | Out-String).Trim()
 
 if ($cur -eq $br) {
-    Add-Content -LiteralPath $LogPath -Value 'ALREADY ON line' -Encoding UTF8
-    Write-Host 'ALREADY ON line'
+    # Board 12273. If master has advanced beyond line's base, rebase so ff-only merge can succeed.
+    git merge-base --is-ancestor master $br 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        $msg = 'master ahead of line - rebasing'
+        Add-Content -LiteralPath $LogPath -Value $msg -Encoding UTF8
+        Write-Host $msg
+        $out = git rebase master 2>&1
+        $out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
+    } else {
+        Add-Content -LiteralPath $LogPath -Value 'ALREADY ON line' -Encoding UTF8
+        Write-Host 'ALREADY ON line'
+    }
 } else {
     $lineExists = (git rev-parse --verify --quiet line 2>&1 | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($lineExists)) {
