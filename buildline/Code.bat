@@ -116,6 +116,20 @@ REM baseBranch=master and answered "No changes detected" on every job. The chain
 REM piece goes up as its own PR and CodeRabbit reviews that PR.
 echo ===== BRANCH board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\branch_checkout.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
+if errorlevel 1 (
+    echo ===== BRANCH CHECKOUT FAILED board !B! %DATE% %TIME% - still on wrong branch, edits preserved, nothing committed ===== >> "%L%"
+    echo.
+    echo ***********************************************
+    echo  BRANCH CHECKOUT FAILED for board !B!
+    echo  Git refused checkout - local edits preserved.
+    echo  Nothing committed.
+    echo ***********************************************
+    echo.
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_wrong_branch.ps1"
+    echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
+    goto loop
+)
 REM --- Pre-review commit: stage migrations/ and tools/, commit before CR sees dirty files ---
 set "HOLDMERGE="
 set "HOLDFILE=%GOPS_REPO%\tools\held_branch.txt"
