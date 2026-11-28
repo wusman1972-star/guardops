@@ -3,23 +3,57 @@
 
 CREATE OR REPLACE FUNCTION guardops.name_without_arguments(p_name text)
 RETURNS text
-LANGUAGE sql
+LANGUAGE plpgsql
 IMMUTABLE
 SET search_path TO ''
 AS $$
-  SELECT
-    CASE
-      WHEN p_name IS NULL THEN NULL
-      WHEN right(btrim(p_name), 1) = ')'
-           AND strpos(btrim(p_name), '(') > 0
-      THEN btrim(
-             left(
-               btrim(p_name),
-               length(btrim(p_name)) - strpos(reverse(btrim(p_name)), '(')
-             )
-           )
-      ELSE btrim(p_name)
-    END
+DECLARE
+  v     text;
+  n     int;
+  i     int;
+  c     text;
+  depth int := 0;
+BEGIN
+  IF p_name IS NULL THEN RETURN NULL; END IF;
+  v := btrim(p_name);
+  n := length(v);
+  IF n = 0 OR right(v, 1) <> ')' OR strpos(v, '(') = 0 THEN
+    RETURN v;
+  END IF;
+  i := n;
+  WHILE i >= 1 LOOP
+    c := substr(v, i, 1);
+    IF c = '"' THEN
+      -- scan backwards past the quoted identifier, handling "" escapes
+      i := i - 1;
+      WHILE i >= 1 LOOP
+        c := substr(v, i, 1);
+        IF c = '"' THEN
+          IF i > 1 AND substr(v, i - 1, 1) = '"' THEN
+            i := i - 2;
+          ELSE
+            i := i - 1;
+            EXIT;
+          END IF;
+        ELSE
+          i := i - 1;
+        END IF;
+      END LOOP;
+    ELSIF c = ')' THEN
+      depth := depth + 1;
+      i := i - 1;
+    ELSIF c = '(' THEN
+      depth := depth - 1;
+      IF depth = 0 THEN
+        RETURN btrim(left(v, i - 1));
+      END IF;
+      i := i - 1;
+    ELSE
+      i := i - 1;
+    END IF;
+  END LOOP;
+  RETURN v;
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION guardops.schema_and_object_name(p_qualified_name text)
@@ -150,6 +184,7 @@ BEGIN
         CROSS JOIN LATERAL unnest(COALESCE(c.added, ARRAY[]::text[])) AS a
         WHERE c.job_id     = p_job_id
           AND c.account_id = v_account
+          AND a IS NOT NULL
      );
 
   SELECT string_agg(
@@ -179,17 +214,19 @@ BEGIN
                   WITH ORDINALITY AS ln(line, ord)
             WHERE pc.plan_given_id = pg.id
               AND pc.account_id    = v_account
-              AND lower(replace(
-                    COALESCE(
-                      (regexp_match(
-                        ln.line,
-                        $$(?i)^[+ -]*(?:create(?:\s+or\s+replace)?(?:\s+(?:temp(?:orary)?))?(?:\s+unlogged)?\s+(?:(?:materialized\s+)?view|table|function|type|sequence|trigger)|alter\s+(?:table|view|type))\s+(?:if\s+not\s+exists\s+)?((?:"[^"]*"|[A-Za-z_]\w*)\.(?:"[^"]*"|[A-Za-z_]\w*))$$
-                      ))[1],
-                      ''
-                    ),
-                    '"', ''
-                  )) = ANY(
-                    SELECT lower(dn.name)
+              AND (
+                    SELECT dec.schema_name || '.' || dec.object_name
+                      FROM guardops.schema_and_object_name(
+                             COALESCE(
+                               (regexp_match(
+                                 ln.line,
+                                 $$(?i)^[+ -]*(?:create(?:\s+or\s+replace)?(?:\s+(?:temp(?:orary)?))?(?:\s+unlogged)?\s+(?:(?:materialized\s+)?view|table|function|type|sequence|trigger)|alter\s+(?:table|view|type))\s+(?:if\s+not\s+exists\s+)?((?:"[^"]*"|[A-Za-z_]\w*)\.(?:"[^"]*"|[A-Za-z_]\w*))$$
+                               ))[1],
+                               ''
+                             )
+                           ) dec
+                  ) = ANY(
+                    SELECT dn.name
                       FROM unnest(COALESCE(v_delivered_names, ARRAY[]::text[])) AS dn(name)
                   )
             GROUP BY cs.committed_at, co.file_key
@@ -274,6 +311,10 @@ BEGIN
   ) AS s
   CROSS JOIN LATERAL guardops.schema_and_object_name(s.stripped) AS p
   CROSS JOIN LATERAL (
+    SELECT pfull_row.object_name AS full_obj_name
+      FROM guardops.schema_and_object_name(obj.name) pfull_row
+  ) AS pfull
+  CROSS JOIN LATERAL (
     SELECT
       CASE
         WHEN v_after_pic IS NULL THEN
@@ -282,7 +323,11 @@ BEGIN
           SELECT 1 FROM guardops.shape_object sa
            WHERE sa.picture_id = v_after_pic
              AND sa.account_id = v_account
-             AND guardops.name_without_arguments(sa.object_name) = p.object_name
+             AND CASE
+                   WHEN right(btrim(obj.name), 1) = ')' AND strpos(obj.name, '(') > 0
+                     THEN sa.object_name = pfull.full_obj_name
+                   ELSE guardops.name_without_arguments(sa.object_name) = p.object_name
+                 END
              AND (p.schema_name = '' OR sa.schema_name = p.schema_name)
         ) THEN NULL
         ELSE
@@ -491,14 +536,13 @@ CREATE OR REPLACE FUNCTION guardops.job_finish(p_job_id bigint, p_delivered_item
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO ''
-AS $function$
+AS $job_finish$
 DECLARE
   v_db_id          bigint;
   v_schema         text;
   v_before_pic     bigint;
   v_after_existing bigint;
   v_after          bigint;
-  v_count          bigint;
   v_jlabel         text;
   v_jcust_id       bigint;
   v_jfacts         jsonb;
@@ -524,11 +568,6 @@ BEGIN
   END IF;
 
   v_after := guardops.take_shape(v_db_id, v_schema);
-
-  SELECT object_count INTO v_count FROM guardops.shape_picture WHERE id = v_after;
-  IF COALESCE(v_count, 0) = 0 THEN
-    RAISE EXCEPTION 'job_finish: after picture for schema % returned no objects', v_schema;
-  END IF;
 
   PERFORM guardops.shape_judge(v_after, v_before_pic);
   UPDATE guardops.job SET after_picture_id = v_after WHERE id = p_job_id;
