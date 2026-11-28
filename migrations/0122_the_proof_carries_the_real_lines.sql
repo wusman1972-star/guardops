@@ -260,6 +260,11 @@ BEGIN
 END;
 $function$;
 
+REVOKE EXECUTE ON FUNCTION guardops.page_lines(bigint, bigint) FROM public, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION guardops.page_lines(bigint, bigint) TO service_role;
+REVOKE EXECUTE ON FUNCTION guardops.page_lines(bigint) FROM public, anon, authenticated;
+GRANT  EXECUTE ON FUNCTION guardops.page_lines(bigint) TO service_role;
+
 -- ========================================================================
 -- PROOF — rolls back all fixture data; function replacements stand.
 -- Five numbered checks as required by board 12236.
