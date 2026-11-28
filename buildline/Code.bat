@@ -233,10 +233,22 @@ if not "!SEVSTOP!"=="0" if not "!SEVSTOP!"=="SKIPPED" (
     powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_hold.ps1"
 )
 REM --- Persistent-hold resolution: a readable gate returning zero is the only automatic clear ---
+REM Hole 856: before clearing, verify the verdict's base covers origin/master. A later job
+REM whose review saw only its own delta must not lift a hold from commits it never reviewed.
 if "!SEVSTOP!"=="0" if not defined SEVBAD (
-    del /q "!HOLDFILE!" 2>nul
-    set "HOLDMERGE="
-    echo ===== HOLD CLEARED board !B! %DATE% %TIME% - full-branch review passed zero critical/major ===== >> "%L%"
+    set "COVCHECK=FULL"
+    if exist "!HOLDFILE!" (
+        set "COVCHECK=UNKNOWN"
+        for /f "delims=" %%C in ('powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\hold_coverage_check.ps1"') do set "COVCHECK=%%C"
+        echo ===== COVERAGE CHECK board !B! %DATE% %TIME% - !COVCHECK! ===== >> "%L%"
+    )
+    if "!COVCHECK!"=="FULL" (
+        del /q "!HOLDFILE!" 2>nul
+        set "HOLDMERGE="
+        echo ===== HOLD CLEARED board !B! %DATE% %TIME% - full-branch review passed zero critical/major ===== >> "%L%"
+    ) else (
+        echo ===== HOLD RETAINED board !B! %DATE% %TIME% - verdict did not cover full branch ^(coverage: !COVCHECK!^) - hold stays ===== >> "%L%"
+    )
 )
 if exist "!HOLDFILE!" (
     set "HOLDMERGE=-BranchOnly"
