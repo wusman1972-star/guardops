@@ -17,7 +17,8 @@ BEGIN
      WHERE oid = to_regprocedure('guardops.page_lines(bigint, bigint)'))), '')
      NOT IN ('7d4e468ac049b074d84cb41dbca5b10f',
               'e8cf2094105e8cca6904bb3524d5af74',
-              'd4d96e464aaddb66f677733e29fefc0f') THEN
+              'd4d96e464aaddb66f677733e29fefc0f',
+              '77f008df8e224e69eeee53e42bcf4b05') THEN
     RAISE EXCEPTION '0124 REFUSED: page_lines(bigint,bigint) is not the 0123 or prior-0124 body (not landed, or already fixed).';
   END IF;
   IF coalesce(md5((SELECT prosrc FROM pg_catalog.pg_proc
@@ -133,30 +134,42 @@ BEGIN
           AND c.account_id = v_account
      );
 
-  -- Proof for DELIVERED: actual changed lines from commit_object.
+  -- Proof for DELIVERED: per-statement filtered — split obj_lines line by line,
+  -- keep only lines whose object identity exactly matches the delivered set,
+  -- rejoin kept lines per file, aggregate across files.
+  -- A line whose object cannot be parsed is dropped, never guessed.
   SELECT string_agg(
     coalesce(
-      (SELECT string_agg(co.obj_lines, E'\n' ORDER BY cs.committed_at, co.file_key)
-         FROM guardops.plan_commit pc
-         JOIN guardops.commit_seen cs
-              ON  cs.id           = pc.commit_seen_id
-              AND cs.account_id   = v_account
-              AND cs.committed_at >= v_opened_at
-              AND cs.committed_at <= COALESCE(
-                    (SELECT MAX(c2.claimed_at)
-                       FROM guardops.claim c2
-                      WHERE c2.job_id     = p_job_id
-                        AND c2.account_id = v_account),
-                    now())
-         JOIN guardops.commit_object co
-              ON  co.commit_seen_id = cs.id
-              AND co.account_id     = v_account
-              AND co.obj_lines IS NOT NULL
+      (SELECT string_agg(per_file.kept_lines, E'\n'
+                ORDER BY per_file.committed_at, per_file.file_key)
+         FROM (
+           SELECT cs.committed_at,
+                  co.file_key,
+                  string_agg(ln.line, E'\n' ORDER BY ln.ord) AS kept_lines
+             FROM guardops.plan_commit pc
+             JOIN guardops.commit_seen cs
+                  ON  cs.id           = pc.commit_seen_id
+                  AND cs.account_id   = v_account
+                  AND cs.committed_at >= v_opened_at
+                  AND cs.committed_at <= COALESCE(
+                        (SELECT MAX(c2.claimed_at)
+                           FROM guardops.claim c2
+                          WHERE c2.job_id     = p_job_id
+                            AND c2.account_id = v_account),
+                        now())
+             JOIN guardops.commit_object co
+                  ON  co.commit_seen_id = cs.id
+                  AND co.account_id     = v_account
+                  AND co.obj_lines IS NOT NULL
+             CROSS JOIN LATERAL regexp_split_to_table(co.obj_lines, E'\n')
+                  WITH ORDINALITY AS ln(line, ord)
+            WHERE pc.plan_given_id = pg.id
+              AND pc.account_id    = v_account
               AND lower(replace(
                     COALESCE(
                       (regexp_match(
-                        co.obj_lines,
-                        '(?i)(?:^|[\r\n])[+\- ]*(?:create(?:\s+or\s+replace)?(?:\s+(?:temp(?:orary)?))?(?:\s+unlogged)?\s+(?:(?:materialized\s+)?view|table|function|type|sequence|trigger)|alter\s+(?:table|view|type))\s+(?:if\s+not\s+exists\s+)?((?:"[^"]*"|[A-Za-z_]\w*)\.(?:"[^"]*"|[A-Za-z_]\w*))'
+                        ln.line,
+                        '(?i)^[+\- ]*(?:create(?:\s+or\s+replace)?(?:\s+(?:temp(?:orary)?))?(?:\s+unlogged)?\s+(?:(?:materialized\s+)?view|table|function|type|sequence|trigger)|alter\s+(?:table|view|type))\s+(?:if\s+not\s+exists\s+)?((?:"[^"]*"|[A-Za-z_]\w*)\.(?:"[^"]*"|[A-Za-z_]\w*))'
                       ))[1],
                       ''
                     ),
@@ -165,8 +178,9 @@ BEGIN
                     SELECT lower(dn.name)
                       FROM unnest(COALESCE(v_delivered_names, ARRAY[]::text[])) AS dn(name)
                   )
-        WHERE pc.plan_given_id = pg.id
-          AND pc.account_id    = v_account),
+            GROUP BY cs.committed_at, co.file_key
+         ) per_file
+      ),
       'nothing to prove'
     ),
     E'\n' ORDER BY pg.item_text
@@ -321,6 +335,7 @@ DO $$
 DECLARE
   v_proof_4     text;
   v_proof_6     text;
+  v_proof_4b    text;
   v_acct        bigint;
   v_cust        bigint;
   v_db          bigint;
@@ -329,16 +344,20 @@ DECLARE
   v_cs          bigint;
   v_job         bigint;
   v_plans       bigint[];
+  v_job_b       bigint;
+  v_plans_b     bigint[];
   v_one_fail    bigint;  v_one_total    bigint;
   v_whole_fail  bigint;  v_whole_total  bigint;
   v_wall_fail   bigint;  v_wall_total   bigint;
 BEGIN
   BEGIN
 
-    -- check 2: fixture — one commit touching two .sql files; only the planned object
-    --          must appear on line 4. Line 4 must have +CREATE for the planned obj,
-    --          no col block, and must NOT carry the unrequested obj. Line 6 must
-    --          have both Before: and After: for the added object.
+    -- check 2: fixture — ONE file whose obj_lines holds BOTH a planned object
+    --          and an unrequested object whose name starts with the planned one.
+    --          Run both orders: planned first (round A), unrequested first (round B).
+    --          In both orders line 4 must carry only the planned statement,
+    --          no col block, and must NOT carry the unrequested statement.
+    --          Line 6 (round A only) must have Before: did not exist + After: columns.
     INSERT INTO guardops.account (name) VALUES ('0124_proof') RETURNING id INTO v_acct;
     INSERT INTO guardops.customer (account_id, external_id)
       VALUES (v_acct, '0124_proof') RETURNING id INTO v_cust;
@@ -350,12 +369,13 @@ BEGIN
     v_db   := guardops.watched_database_add('0124_proof_db');
     v_link := guardops.repo_link_add('0124-proof/repo', 'main');
 
-    v_job   := guardops.job_start(v_db, v_link, '0124 proof job', 'guardops');
+    -- ---- Round A: planned object first in obj_lines ----
+    v_job   := guardops.job_start(v_db, v_link, '0124 proof job A', 'guardops');
     v_plans := guardops.plan_given_add(v_job, ARRAY['add planned table']);
 
     -- Create both tables AFTER job_start so neither appears in the before picture.
-    EXECUTE 'CREATE TABLE guardops.invoice (inv_id bigint, inv_val text)';
-    EXECUTE 'CREATE TABLE guardops.invoice_audit (aud_id bigint, aud_val text)';
+    EXECUTE 'CREATE TABLE guardops.inv_test (id bigint)';
+    EXECUTE 'CREATE TABLE guardops.inv_test_audit (id bigint)';
 
     SELECT pl.pull_id INTO v_pull_id FROM guardops.pull_begin(v_link) AS pl;
     v_cs := guardops.commit_record(
@@ -364,10 +384,9 @@ BEGIN
       'tester', now(),
       'GO-' || v_job::text || '-1 fixture',
       jsonb_build_object(
-        'migrations/0124_proof.sql',
-        '+CREATE TABLE guardops.invoice (inv_id bigint, inv_val text)',
-        'migrations/0124_proof_added.sql',
-        '+CREATE TABLE guardops.invoice_audit (aud_id bigint, aud_val text)'
+        'migrations/0124_proof_a.sql',
+        '+CREATE TABLE guardops.inv_test (id bigint)' || E'\n' ||
+        '+CREATE TABLE guardops.inv_test_audit (id bigint)'
       ),
       v_pull_id
     );
@@ -376,39 +395,84 @@ BEGIN
     PERFORM guardops.job_finish(
       v_job,
       v_plans,
-      ARRAY['guardops.invoice_audit'],
+      ARRAY['guardops.inv_test_audit'],
       ARRAY[]::text[]
     );
 
     SELECT proof INTO v_proof_4 FROM guardops.page_lines(v_cust, v_job) WHERE line_no = 4;
     SELECT proof INTO v_proof_6 FROM guardops.page_lines(v_cust, v_job) WHERE line_no = 6;
-    RAISE NOTICE '0124 fixture line_4="%"', v_proof_4;
-    RAISE NOTICE '0124 fixture line_6="%"', v_proof_6;
+    RAISE NOTICE '0124 roundA line_4="%"', v_proof_4;
+    RAISE NOTICE '0124 roundA line_6="%"', v_proof_6;
 
-    IF v_proof_4 NOT LIKE '%+CREATE%' THEN
-      RAISE EXCEPTION '0124 fixture: line 4 must have obj_lines (+CREATE), got [%]', v_proof_4;
+    IF v_proof_4 NOT LIKE '%+CREATE TABLE guardops.inv_test (%' THEN
+      RAISE EXCEPTION '0124 roundA: line 4 must show +CREATE for guardops.inv_test, got [%]', v_proof_4;
     END IF;
     IF v_proof_4 LIKE '%Before:%' THEN
-      RAISE EXCEPTION '0124 fixture: line 4 must NOT have col block (Before:), got [%]', v_proof_4;
+      RAISE EXCEPTION '0124 roundA: line 4 must NOT have col block (Before:), got [%]', v_proof_4;
     END IF;
-    IF v_proof_4 NOT LIKE '%guardops.invoice%' THEN
-      RAISE EXCEPTION '0124 fixture: line 4 must show planned obj (guardops.invoice), got [%]', v_proof_4;
+    IF v_proof_4 LIKE '%inv_test_audit%' THEN
+      RAISE EXCEPTION '0124 roundA: line 4 must NOT show unrequested obj (inv_test_audit), got [%]', v_proof_4;
     END IF;
-    IF v_proof_4 LIKE '%invoice_audit%' THEN
-      RAISE EXCEPTION '0124 fixture: line 4 must NOT show unrequested obj (invoice_audit), got [%]', v_proof_4;
-    END IF;
-    RAISE NOTICE '0124 fixture line_4 pass=true';
+    RAISE NOTICE '0124 roundA line_4 pass=true';
 
     IF v_proof_6 NOT LIKE '%Before: did not exist%' THEN
-      RAISE EXCEPTION '0124 fixture: line 6 must have "Before: did not exist", got [%]', v_proof_6;
+      RAISE EXCEPTION '0124 roundA: line 6 must have "Before: did not exist", got [%]', v_proof_6;
     END IF;
     IF v_proof_6 NOT LIKE '%After:%' THEN
-      RAISE EXCEPTION '0124 fixture: line 6 must have "After:", got [%]', v_proof_6;
+      RAISE EXCEPTION '0124 roundA: line 6 must have "After:", got [%]', v_proof_6;
     END IF;
-    IF v_proof_6 NOT LIKE '%aud_id%' THEN
-      RAISE EXCEPTION '0124 fixture: line 6 must list added table columns (aud_id), got [%]', v_proof_6;
+    IF v_proof_6 NOT LIKE '%id %' THEN
+      RAISE EXCEPTION '0124 roundA: line 6 must list added table columns (id), got [%]', v_proof_6;
     END IF;
-    RAISE NOTICE '0124 fixture line_6 pass=true';
+    RAISE NOTICE '0124 roundA line_6 pass=true';
+
+    PERFORM guardops.pull_abort(v_pull_id, '0124 fixture roundA done');
+
+    -- ---- Round B: unrequested object first in obj_lines ----
+    -- inv_b_audit first; planned object is inv_b. After fix, line 4 must show
+    -- only inv_b, never inv_b_audit, regardless of statement order.
+    v_job_b   := guardops.job_start(v_db, v_link, '0124 proof job B', 'guardops');
+    v_plans_b := guardops.plan_given_add(v_job_b, ARRAY['add planned table']);
+
+    -- Create both tables AFTER job_start so neither appears in the before picture.
+    EXECUTE 'CREATE TABLE guardops.inv_b (id bigint)';
+    EXECUTE 'CREATE TABLE guardops.inv_b_audit (id bigint)';
+
+    SELECT pl.pull_id INTO v_pull_id FROM guardops.pull_begin(v_link) AS pl;
+    v_cs := guardops.commit_record(
+      '0124-proof/repo', 'main',
+      '0124b00000000000000000000000000000000000',
+      'tester', now(),
+      'GO-' || v_job_b::text || '-1 fixture',
+      jsonb_build_object(
+        'migrations/0124_proof_b.sql',
+        '+CREATE TABLE guardops.inv_b_audit (id bigint)' || E'\n' ||
+        '+CREATE TABLE guardops.inv_b (id bigint)'
+      ),
+      v_pull_id
+    );
+    PERFORM guardops.plan_commit_link(v_job_b);
+
+    PERFORM guardops.job_finish(
+      v_job_b,
+      v_plans_b,
+      ARRAY['guardops.inv_b_audit'],
+      ARRAY[]::text[]
+    );
+
+    SELECT proof INTO v_proof_4b FROM guardops.page_lines(v_cust, v_job_b) WHERE line_no = 4;
+    RAISE NOTICE '0124 roundB line_4="%"', v_proof_4b;
+
+    IF v_proof_4b NOT LIKE '%+CREATE TABLE guardops.inv_b (%' THEN
+      RAISE EXCEPTION '0124 roundB: line 4 must show +CREATE for guardops.inv_b, got [%]', v_proof_4b;
+    END IF;
+    IF v_proof_4b LIKE '%Before:%' THEN
+      RAISE EXCEPTION '0124 roundB: line 4 must NOT have col block (Before:), got [%]', v_proof_4b;
+    END IF;
+    IF v_proof_4b LIKE '%inv_b_audit%' THEN
+      RAISE EXCEPTION '0124 roundB: line 4 must NOT show unrequested obj (inv_b_audit), got [%]', v_proof_4b;
+    END IF;
+    RAISE NOTICE '0124 roundB line_4 pass=true';
 
     -- check 3: grants — anon/authenticated blocked, postgres/service_role have EXECUTE.
     IF has_function_privilege('anon', 'guardops.page_lines(bigint, bigint)', 'EXECUTE') THEN
