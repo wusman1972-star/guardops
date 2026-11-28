@@ -84,14 +84,11 @@ BEGIN
     string_agg(jv.what,  E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'MISSING'),
     string_agg(jv.proof, E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'MISSING'),
     string_agg(jv.what,  E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'ADDED'),
-    string_agg(jv.proof, E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'ADDED'),
-    string_agg(jv.what,  E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'DELETED'),
-    string_agg(jv.proof, E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'DELETED')
+    string_agg(jv.proof, E'\n' ORDER BY jv.what) FILTER (WHERE jv.kind = 'ADDED')
   INTO
     v_built_body,   v_built_detail,
     v_unbuilt_body, v_unbuilt_proof,
-    v_added_body,   v_added_detail,
-    v_deleted_body, v_deleted_detail
+    v_added_body,   v_added_detail
   FROM guardops.job_verdict(p_job_id) AS jv;
 
   -- Delivered-names set: in AFTER picture, absent from BEFORE, not in claim.added.
@@ -225,17 +222,24 @@ BEGIN
       ) a_cols
   ) combined;
 
-  -- Proof for DELETED: verify each claimed-deleted object is genuinely absent from
-  -- the after picture before reporting it gone.  Same identity match as MISSING in
-  -- job_verdict: lowercase, bracketed tail stripped, schema and base_name split
-  -- separately (reuse, not rewrite).
-  -- Objects still present in the after picture yield NULL and are excluded by the
-  -- WHERE clause — they are not reported gone.
-  -- When there is no after picture the proof says so plainly for every entry.
-  SELECT string_agg(
-    combined.proof_text,
-    E'\n' ORDER BY obj.name
-  ) INTO v_deleted_proof
+  -- Body and proof for DELETED: one query, one normaliser — both columns use the
+  -- same filter so whatever appears in body appears in proof and vice versa.
+  --
+  -- Name normalisation (lateral p): strip the paren tail first (function sig),
+  -- then split on the first dot.  Each component is unquoted with Postgres case
+  -- rules: a quoted part ("Foo") keeps its exact case after stripping the quotes;
+  -- an unquoted part folds to lower.  The result is compared directly to
+  -- shape_object catalog values (stored without quotes, already resolved).
+  --
+  -- Objects still present in the after picture yield NULL proof_text and are
+  -- excluded from BOTH body and proof by the FILTER — they never appear on line 7.
+  -- No after picture → proof says so; the name IS included in body.
+  SELECT
+    string_agg(obj.name, E'\n' ORDER BY obj.name)
+      FILTER (WHERE combined.proof_text IS NOT NULL),
+    string_agg(combined.proof_text, E'\n' ORDER BY obj.name)
+      FILTER (WHERE combined.proof_text IS NOT NULL)
+  INTO v_deleted_body, v_deleted_proof
   FROM unnest(
     COALESCE(
       (SELECT array_agg(DISTINCT del ORDER BY del) FILTER (WHERE del IS NOT NULL)
@@ -254,11 +258,23 @@ BEGIN
            ) AS stripped
   ) AS s
   CROSS JOIN LATERAL (
+    -- One normaliser: quoted component ("Foo") → strip quotes, keep case;
+    -- unquoted component → fold to lower.  Referenced by both EXISTS and b_cols.
     SELECT
-      CASE WHEN strpos(s.stripped, '.') > 0
-           THEN lower(trim(split_part(s.stripped, '.', 1)))
-           ELSE '' END AS schema_part,
-      lower(trim(split_part(s.stripped, '.', -1))) AS base_name
+      CASE
+        WHEN strpos(s.stripped, '.') > 0
+        THEN CASE
+               WHEN trim(split_part(s.stripped, '.', 1)) ~ '^".*"$'
+               THEN trim(both '"' from trim(split_part(s.stripped, '.', 1)))
+               ELSE lower(trim(split_part(s.stripped, '.', 1)))
+             END
+        ELSE ''
+      END AS schema_part,
+      CASE
+        WHEN trim(split_part(s.stripped, '.', -1)) ~ '^".*"$'
+        THEN trim(both '"' from trim(split_part(s.stripped, '.', -1)))
+        ELSE lower(trim(split_part(s.stripped, '.', -1)))
+      END AS base_name
   ) AS p
   CROSS JOIN LATERAL (
     SELECT
@@ -269,8 +285,8 @@ BEGIN
           SELECT 1 FROM guardops.shape_object sa
            WHERE sa.picture_id = v_after_pic
              AND sa.account_id = v_account
-             AND lower(split_part(sa.object_name, '(', 1)) = p.base_name
-             AND (p.schema_part = '' OR lower(sa.schema_name) = p.schema_part)
+             AND split_part(sa.object_name, '(', 1) = p.base_name
+             AND (p.schema_part = '' OR sa.schema_name = p.schema_part)
         ) THEN NULL
         ELSE
           obj.name || E'\n' ||
@@ -284,13 +300,12 @@ BEGIN
                  FROM guardops.shape_object so
                 WHERE so.picture_id  = v_before_pic
                   AND so.account_id  = v_account
-                  AND lower(split_part(so.object_name, '(', 1)) = p.base_name
-                  AND (p.schema_part = '' OR lower(so.schema_name) = p.schema_part)
+                  AND split_part(so.object_name, '(', 1) = p.base_name
+                  AND (p.schema_part = '' OR so.schema_name = p.schema_part)
                 LIMIT 1) one_row,
               LATERAL jsonb_to_recordset(one_row.column_shape) AS e(name text, type text)
       ) b_cols
-  ) combined
-  WHERE combined.proof_text IS NOT NULL;
+  ) combined;
 
   line_no := 1; heading := 'What went in';
   body    := 'Job: ' || coalesce(v_job_wfor, 'untitled')
@@ -340,5 +355,3 @@ $function$;
 
 REVOKE ALL ON FUNCTION guardops.page_lines(bigint, bigint) FROM PUBLIC, anon, authenticated;
 GRANT  EXECUTE ON FUNCTION guardops.page_lines(bigint, bigint) TO postgres, service_role;
-REVOKE ALL ON FUNCTION guardops.page_lines(bigint) FROM PUBLIC, anon, authenticated;
-GRANT  EXECUTE ON FUNCTION guardops.page_lines(bigint) TO postgres, service_role;
