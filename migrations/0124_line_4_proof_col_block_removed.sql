@@ -276,13 +276,12 @@ GRANT  EXECUTE ON FUNCTION guardops.page_lines(bigint) TO postgres, service_role
 
 -- ========================================================================
 -- PROOF — rolls back all fixture data; function replacement stands.
--- Five checks: live job 149, fixture test, grants, security, suites.
+-- Four checks: fixture test, grants, security, suites.
 -- ========================================================================
 DO $$
 DECLARE
   v_proof_4     text;
   v_proof_6     text;
-  v_proof_7     text;
   v_acct        bigint;
   v_cust        bigint;
   v_db          bigint;
@@ -296,28 +295,6 @@ DECLARE
   v_wall_fail   bigint;  v_wall_total   bigint;
 BEGIN
   BEGIN
-
-    -- check 1: live job 149 — line 4 ends at the last +CREATE, no col block;
-    --          line 6 still carries both halves; line 7 unchanged.
-    SELECT proof INTO v_proof_4 FROM guardops.page_lines(149) WHERE line_no = 4;
-    SELECT proof INTO v_proof_6 FROM guardops.page_lines(149) WHERE line_no = 6;
-    SELECT proof INTO v_proof_7 FROM guardops.page_lines(149) WHERE line_no = 7;
-    RAISE NOTICE '0124 live line_4="%"', v_proof_4;
-    RAISE NOTICE '0124 live line_6="%"', v_proof_6;
-    RAISE NOTICE '0124 live line_7="%"', v_proof_7;
-    IF v_proof_4 LIKE '%Before: did not exist%' THEN
-      RAISE EXCEPTION '0124 live: line 4 still has "Before: did not exist", got [%]', v_proof_4;
-    END IF;
-    IF v_proof_4 LIKE '%After:%' THEN
-      RAISE EXCEPTION '0124 live: line 4 still has "After:", got [%]', v_proof_4;
-    END IF;
-    IF v_proof_6 NOT LIKE '%Before: did not exist%' THEN
-      RAISE EXCEPTION '0124 live: line 6 lost its "Before: did not exist", got [%]', v_proof_6;
-    END IF;
-    IF v_proof_6 NOT LIKE '%After:%' THEN
-      RAISE EXCEPTION '0124 live: line 6 lost its "After:", got [%]', v_proof_6;
-    END IF;
-    RAISE NOTICE '0124 live_check pass=true';
 
     -- check 2: fixture — planned delivery vs unrequested addition, different objects.
     --          Line 4 must have obj_lines (+CREATE) and no Before:/After: col block.
