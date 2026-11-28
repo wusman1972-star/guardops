@@ -10,27 +10,7 @@ $br = 'line'
 
 $cur = (git rev-parse --abbrev-ref HEAD 2>&1 | Out-String).Trim()
 
-if ($cur -eq $br) {
-    # Board 12273. If master has advanced beyond line's base, rebase so ff-only merge can succeed.
-    git merge-base --is-ancestor master $br 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        $msg = 'master ahead of line - rebasing'
-        Add-Content -LiteralPath $LogPath -Value $msg -Encoding UTF8
-        Write-Host $msg
-        $out = git rebase master 2>&1
-        $out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) {
-            git rebase --abort 2>&1 | Out-Null
-            $msg = "REBASE FAILED: rebase of line onto master exited $LASTEXITCODE - aborted, tree is clean, refusing to continue"
-            Add-Content -LiteralPath $LogPath -Value $msg -Encoding UTF8
-            Write-Host $msg
-            exit 1
-        }
-    } else {
-        Add-Content -LiteralPath $LogPath -Value 'ALREADY ON line' -Encoding UTF8
-        Write-Host 'ALREADY ON line'
-    }
-} else {
+if ($cur -ne $br) {
     $lineExists = (git rev-parse --verify --quiet line 2>&1 | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($lineExists)) {
         # "line" does not exist yet - create from CURRENT HEAD, not master, so no work is thrown away
@@ -50,6 +30,27 @@ if ($cur -eq $br) {
         Write-Host $msg
         exit 1
     }
+}
+
+# Board 12273 / 12293. Now on line - reconcile with master on both paths.
+# If master has advanced beyond line's base, rebase so ff-only merge can succeed.
+git merge-base --is-ancestor master $br 2>&1 | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    $msg = 'master ahead of line - rebasing'
+    Add-Content -LiteralPath $LogPath -Value $msg -Encoding UTF8
+    Write-Host $msg
+    $out = git rebase master 2>&1
+    $out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
+    if ($LASTEXITCODE -ne 0) {
+        git rebase --abort 2>&1 | Out-Null
+        $msg = "REBASE FAILED: rebase of line onto master exited $LASTEXITCODE - aborted, tree is clean, refusing to continue"
+        Add-Content -LiteralPath $LogPath -Value $msg -Encoding UTF8
+        Write-Host $msg
+        exit 1
+    }
+} else {
+    Add-Content -LiteralPath $LogPath -Value 'line up to date with master' -Encoding UTF8
+    Write-Host 'line up to date with master'
 }
 
 Add-Content -LiteralPath $LogPath -Value ('ON BRANCH: ' + (git rev-parse --abbrev-ref HEAD)) -Encoding UTF8
