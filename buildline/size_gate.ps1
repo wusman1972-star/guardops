@@ -55,13 +55,16 @@ $fileList  = ($touchedFiles | Select-Object -First 30) -join "`n  "
 $stopMsg   = "SIZE GATE STOP: $totalLines lines changed, limit is $limit. Files touched (${fileCount}):`n  $fileList"
 Add-Content -LiteralPath $VerdictFile "===== $stopMsg ====="
 
-# Push the branch so the work is not lost
+# Push the branch so the work is not lost - never push master
 $branch = (& git rev-parse --abbrev-ref HEAD 2>$null) -join ''
-if ($branch -and $branch -ne 'HEAD') {
+if ($branch -and $branch -ne 'HEAD' -and $branch -ne 'master') {
     $pushOut = & git push --set-upstream origin $branch 2>&1
     foreach ($ln in $pushOut) {
         Add-Content -LiteralPath $VerdictFile "git push: $ln"
     }
+} elseif ($branch -eq 'master') {
+    Add-Content -LiteralPath $VerdictFile "===== SIZE HOLD PUSH REFUSED: on master, pushing nothing ====="
+    Write-Host "SIZE HOLD: on master - push refused, nothing sent to remote"
 }
 
 # File hold board via psql (REST API anon key does not reach RPC on this floor).
