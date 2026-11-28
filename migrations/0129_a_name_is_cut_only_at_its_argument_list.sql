@@ -148,7 +148,7 @@ BEGIN
                     COALESCE(
                       (regexp_match(
                         ln.line,
-                        '(?i)^[+\\- ]*(?:create(?:\\s+or\\s+replace)?(?:\\s+(?:temp(?:orary)?))?(?:\\s+unlogged)?\\s+(?:(?:materialized\\s+)?view|table|function|type|sequence|trigger)|alter\\s+(?:table|view|type))\\s+(?:if\\s+not\\s+exists\\s+)?((?:\"[^\"]*\"|[A-Za-z_]\\w*)\\.(?:\"[^\"]*\"|[A-Za-z_]\\w*))'
+                        $$(?i)^[+ -]*(?:create(?:\s+or\s+replace)?(?:\s+(?:temp(?:orary)?))?(?:\s+unlogged)?\s+(?:(?:materialized\s+)?view|table|function|type|sequence|trigger)|alter\s+(?:table|view|type))\s+(?:if\s+not\s+exists\s+)?((?:"[^"]*"|[A-Za-z_]\w*)\.(?:"[^"]*"|[A-Za-z_]\w*))$$
                       ))[1],
                       ''
                     ),
@@ -427,7 +427,10 @@ BEGIN
          FROM guardops.shape_change sc
         WHERE sc.database_id  = v_db_id
           AND sc.change_kind  = 'APPEARED'
-          AND sc.schema_name || '.' || sc.object_name = obj.name
+          AND sc.schema_name || '.' ||
+              CASE WHEN lower(sc.object_kind) = 'function'
+                   THEN guardops.name_without_arguments(sc.object_name)
+                   ELSE sc.object_name END = obj.name
         ORDER BY sc.noticed_at DESC
         LIMIT 1),
       'no shape record'
@@ -445,7 +448,10 @@ BEGIN
          FROM guardops.shape_change sc
         WHERE sc.database_id  = v_db_id
           AND sc.change_kind  = 'GONE'
-          AND sc.schema_name || '.' || sc.object_name = obj.name
+          AND sc.schema_name || '.' ||
+              CASE WHEN lower(sc.object_kind) = 'function'
+                   THEN guardops.name_without_arguments(sc.object_name)
+                   ELSE sc.object_name END = obj.name
         ORDER BY sc.noticed_at DESC
         LIMIT 1),
       'no shape record'
