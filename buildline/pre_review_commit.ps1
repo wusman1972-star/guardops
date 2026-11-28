@@ -4,7 +4,14 @@ param(
     [string]$RepoPath
 )
 Set-Location $RepoPath
-git add migrations/ tools/ 2>&1 | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8 }
+$codeSource = Join-Path (Split-Path $RepoPath -Parent) 'Code.bat'
+$codeDest   = Join-Path $RepoPath 'buildline\Code.bat'
+if (Test-Path $codeSource) {
+    Copy-Item -LiteralPath $codeSource -Destination $codeDest -Force
+} else {
+    Add-Content -LiteralPath $LogPath -Value "PRE-REVIEW COMMIT: Code.bat not found at $codeSource, skipping mirror" -Encoding UTF8
+}
+git add migrations/ tools/ buildline/ .gitignore 2>&1 | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8 }
 $staged = (git diff --cached --name-only)
 if ($staged) {
     $msg = 'board ' + $BoardId + ' job commit'

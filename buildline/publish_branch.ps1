@@ -5,13 +5,13 @@ param(
     [switch]$BranchOnly
 )
 Set-Location $RepoPath
-$br = 'board-' + $BoardId
+$br = 'line'
 
 # 24 Nov, board 11883. This used to be "git push origin HEAD". HEAD is whatever happens to
 # be checked out, so if an earlier run left master checked out, a retry pushed MASTER even
-# while the merge was being held - which made the hold worth nothing. Now the board branch
-# is named explicitly, and the run stops if that branch is not the one checked out rather
-# than guessing or switching branches on its own.
+# while the merge was being held - which made the hold worth nothing. The branch is named
+# explicitly, and the run stops if that branch is not the one checked out rather than
+# guessing or switching branches on its own.
 $cur = (git rev-parse --abbrev-ref HEAD 2>&1 | Out-String).Trim()
 if ($cur -ne $br) {
     Add-Content -LiteralPath $LogPath -Value ('WRONG BRANCH: expected ' + $br + ' but ' + $cur + ' is checked out - nothing pushed, nothing merged') -Encoding UTF8
@@ -50,6 +50,12 @@ $out = git push origin master 2>&1
 $out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
 if ($LASTEXITCODE -ne 0) {
     Add-Content -LiteralPath $LogPath -Value ('MASTER PUSH FAILED for ' + $br + ' - merged locally not pushed') -Encoding UTF8
+    return
+}
+$out = git push origin $br 2>&1
+$out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
+if ($LASTEXITCODE -ne 0) {
+    Add-Content -LiteralPath $LogPath -Value ('LINE PUSH FAILED after master merge') -Encoding UTF8
     return
 }
 Add-Content -LiteralPath $LogPath -Value ('MERGED AND PUSHED: ' + $br + ' -> master') -Encoding UTF8

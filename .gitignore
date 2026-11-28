@@ -9,3 +9,5 @@ tools/verdicts/
 *.log
 code_log*.txt
 tools/floor/
+buildline/*.before_*
+*.bak

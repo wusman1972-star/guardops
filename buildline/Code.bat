@@ -117,6 +117,7 @@ REM piece goes up as its own PR and CodeRabbit reviews that PR.
 echo ===== BRANCH board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\branch_checkout.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 REM --- Pre-review commit: stage migrations/ and tools/, commit before CR sees dirty files ---
+set "HOLDMERGE="
 echo ===== PRE-REVIEW COMMIT board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\pre_review_commit.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 if errorlevel 1 (
@@ -133,12 +134,15 @@ call "%~dp0cr_review.bat" "!B!"
 set "CR_EXIT=!ERRORLEVEL!"
 set "CR_RETRIES=0"
 :cr_allowance_wait
-if !CR_EXIT! equ 2 (
+set "CR_WHY="
+if !CR_EXIT! equ 2 set "CR_WHY=the reviewer reported a rate limit"
+if !CR_EXIT! equ 3 set "CR_WHY=the connection to the reviewer dropped"
+if defined CR_WHY (
     if !CR_RETRIES! lss 5 (
         set /a CR_RETRIES+=1
-        echo ===== CR ALLOWANCE SPENT board !B! retry !CR_RETRIES!/5 waiting 300s %DATE% %TIME% ===== >> "%L%"
+        echo ===== CR REVIEW RETRY NEEDED board !B! - !CR_WHY! - retry !CR_RETRIES!/5 waiting 300s %DATE% %TIME% ===== >> "%L%"
         echo.
-        echo  CR allowance spent for board !B! ^(exit 2^) - retry !CR_RETRIES!/5 - waiting 5 min...
+        echo  Review did not finish for board !B!: !CR_WHY!. Retry !CR_RETRIES!/5 - waiting 5 min...
         echo.
         timeout /t 300 /nobreak >nul
         echo ===== CR REVIEW RETRY !CR_RETRIES! board !B! %DATE% %TIME% ===== >> "%L%"
@@ -146,6 +150,18 @@ if !CR_EXIT! equ 2 (
         set "CR_EXIT=!ERRORLEVEL!"
         goto cr_allowance_wait
     )
+)
+if !CR_EXIT! equ 5 (
+    echo ===== SIZE GATE HELD board !B! %DATE% %TIME% - branch pushed, master not touched, line carries on ===== >> "%L%"
+    echo.
+    echo ***********************************************
+    echo  SIZE GATE: board !B! exceeded the line limit
+    echo  Branch pushed. NOT merged into master.
+    echo ***********************************************
+    echo.
+    echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
+    goto loop
 )
 if !CR_EXIT! neq 0 (
     echo ===== CR REVIEW REFUSED board !B! %DATE% %TIME% - LINE STOPPED ===== >> "%L%"
@@ -192,16 +208,24 @@ if not "!SEVSTOP!"=="0" (
     REM wrong, mark it, and move on. The gate used to push the branch and stop the line
     REM here. It no longer stops anything - it marks the job loudly and falls straight
     REM through to the normal push and merge.
-    echo ===== MARKED board !B! %DATE% %TIME% - !SEVSTOP! critical/major finding^(s^) in the review; work carries on, see the verdict file ===== >> "%L%"
+    set "HOLDMERGE=-BranchOnly"
+    REM 25 Nov 2026, Waqar's order: record WHICH branch is held, so the next job carries
+    REM on from it instead of cutting a fresh one from master and losing the held fix.
+    echo board-!B!> "%GOPS_REPO%\tools\held_branch.txt"
+    echo ===== MERGE HELD board !B! %DATE% %TIME% - !SEVSTOP! critical/major finding^(s^) in the review; the branch is pushed, master is NOT touched, the line carries on ===== >> "%L%"
     echo.
     echo ***********************************************
-    echo  MARKED: board !B! has !SEVSTOP! serious finding^(s^)
-    echo  Nothing is held. The work carries on.
+    echo  MERGE HELD: board !B! has !SEVSTOP! serious finding^(s^)
+    echo  Branch pushed. NOT merged into master.
     echo ***********************************************
     echo.
+    echo ===== FILE HOLD BOARD board !B! %DATE% %TIME% ===== >> "%L%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_hold.ps1"
 )
-echo ===== GIT PUSH board !B! %DATE% %TIME% ===== >> "%L%"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\publish_branch.ps1" -LogPath "%L%" -BoardId "!B!" -RepoPath "%GOPS_REPO%"
+REM A merge that is NOT held clears the held marker, so the next job starts clean from master.
+if "!HOLDMERGE!"=="" del /q "%GOPS_REPO%\tools\held_branch.txt" 2>nul
+echo ===== GIT PUSH board !B! %DATE% %TIME% - merge hold: [!HOLDMERGE!] ===== >> "%L%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\publish_branch.ps1" -LogPath "%L%" -BoardId "!B!" -RepoPath "%GOPS_REPO%" !HOLDMERGE!
 echo ===== FETCH REAL MASTER board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\fetch_master.ps1" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 echo ===== END board !B! %DATE% %TIME% ===== >> "%L%"
