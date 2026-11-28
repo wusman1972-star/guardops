@@ -1,8 +1,10 @@
 -- 1. plan_commit: append-only lock, same pattern as shape_object
+DROP TRIGGER IF EXISTS plan_commit_cannot_be_changed ON guardops.plan_commit;
 CREATE TRIGGER plan_commit_cannot_be_changed
   BEFORE DELETE OR UPDATE ON guardops.plan_commit
   FOR EACH ROW EXECUTE FUNCTION guardops.a_record_cannot_be_changed();
 
+DROP TRIGGER IF EXISTS plan_commit_cannot_be_wiped ON guardops.plan_commit;
 CREATE TRIGGER plan_commit_cannot_be_wiped
   BEFORE TRUNCATE ON guardops.plan_commit
   FOR EACH STATEMENT EXECUTE FUNCTION guardops.a_record_cannot_be_wiped();
@@ -39,10 +41,12 @@ BEGIN
 END;
 $function$;
 
+DROP TRIGGER IF EXISTS commit_seen_patch_can_only_be_filled ON guardops.commit_seen;
 CREATE TRIGGER commit_seen_patch_can_only_be_filled
   BEFORE UPDATE OR DELETE ON guardops.commit_seen
   FOR EACH ROW EXECUTE FUNCTION guardops.a_patch_can_only_be_filled();
 
+DROP TRIGGER IF EXISTS commit_seen_cannot_be_wiped ON guardops.commit_seen;
 CREATE TRIGGER commit_seen_cannot_be_wiped
   BEFORE TRUNCATE ON guardops.commit_seen
   FOR EACH STATEMENT EXECUTE FUNCTION guardops.a_record_cannot_be_wiped();
@@ -55,17 +59,19 @@ BEGIN
     RAISE EXCEPTION 'commit_object rows are derived; UPDATE is not permitted';
   END IF;
   -- DELETE: allow only when commit_object_build has set the flag
-  IF current_setting('guardops.rebuilding_commit_object', true) <> '1' THEN
+  IF coalesce(current_setting('guardops.rebuilding_commit_object', true), '') <> '1' THEN
     RAISE EXCEPTION 'commit_object rows may only be deleted by commit_object_build';
   END IF;
   RETURN OLD;
 END;
 $function$;
 
+DROP TRIGGER IF EXISTS commit_object_rebuilt_only_by_its_door ON guardops.commit_object;
 CREATE TRIGGER commit_object_rebuilt_only_by_its_door
   BEFORE UPDATE OR DELETE ON guardops.commit_object
   FOR EACH ROW EXECUTE FUNCTION guardops.a_derived_row_is_rebuilt_only_by_its_door();
 
+DROP TRIGGER IF EXISTS commit_object_cannot_be_wiped ON guardops.commit_object;
 CREATE TRIGGER commit_object_cannot_be_wiped
   BEFORE TRUNCATE ON guardops.commit_object
   FOR EACH STATEMENT EXECUTE FUNCTION guardops.a_record_cannot_be_wiped();
@@ -94,6 +100,7 @@ begin
     cross join lateral jsonb_object_keys(case when jsonb_typeof(cs.files) = 'object' then cs.files else '{}'::jsonb end) as k(key)
    where cs.id = p_commit_seen_id;
   get diagnostics v_n = row_count;
+  perform set_config('guardops.rebuilding_commit_object', '0', true);
   return v_n;
 end
 $function$;
