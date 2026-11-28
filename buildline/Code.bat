@@ -170,18 +170,6 @@ if defined CR_WHY (
         goto cr_allowance_wait
     )
 )
-if !CR_EXIT! equ 5 (
-    echo ===== SIZE GATE HELD board !B! %DATE% %TIME% - branch pushed, master not touched, line carries on ===== >> "%L%"
-    echo.
-    echo ***********************************************
-    echo  SIZE GATE: board !B! exceeded the line limit
-    echo  Branch pushed. NOT merged into master.
-    echo ***********************************************
-    echo.
-    echo ===== LOCK RELEASE board !B! %DATE% %TIME% ===== >> "%L%"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\lock_release.ps1" >nul 2>&1
-    goto loop
-)
 if !CR_EXIT! neq 0 (
     echo ===== CR REVIEW REFUSED board !B! %DATE% %TIME% - LINE STOPPED ===== >> "%L%"
     echo.
