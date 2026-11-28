@@ -59,7 +59,7 @@ try {
     }
 
     if ($anyFinished) { Write-Output "$worst"; exit 0 }
-    if ($anySkip)     { Write-Output '0';      exit 0 }
+    if ($anySkip)     { Write-Output 'SKIPPED'; exit 0 }
 
     Write-Output 'NOTCOMPLETE'
     exit 0

@@ -210,7 +210,10 @@ if defined SEVBAD (
     echo ===== SEVERITY GATE COULD NOT READ THE VERDICT board !B! %DATE% %TIME% - !SEVBAD! - GATE IS NOT WORKING, FIX IT ===== >> "%L%"
     set "SEVSTOP=0"
 )
-if not "!SEVSTOP!"=="0" (
+if "!SEVSTOP!"=="SKIPPED" (
+    echo ===== SEVERITY GATE SKIPPED board !B! %DATE% %TIME% - no reviewable change, hold persists unchanged ===== >> "%L%"
+)
+if not "!SEVSTOP!"=="0" if not "!SEVSTOP!"=="SKIPPED" (
     REM His ruling 23 Nov, about 9:50 AM: never stop anyone's work. Tell them what is
     REM wrong, mark it, and move on. The gate used to push the branch and stop the line
     REM here. It no longer stops anything - it marks the job loudly and falls straight
