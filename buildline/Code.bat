@@ -10,6 +10,7 @@ set "NODE_USE_ENV_PROXY=1"
 set "F=%~dp0next_job.txt"
 set "L=%~dp0code_log.txt"
 set "LAST="
+if exist "%~dp0last_board.txt" for /f "usebackq delims=" %%Z in ("%~dp0last_board.txt") do set "LAST=%%Z"
 set "SBURL=https://lauttgnmksnxohigaqee.supabase.co"
 set "SBKEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
 set "SBKEY=!SBKEY!.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxhdXR0Z25ta3NueG9oaWdhcWVlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg4NDgxNzAsImV4cCI6MjEwNDQyNDE3MH0.zsuiRFhZd8163ysJeOLVrNJLJyJxoNnT0X4qoV85Z-A"
@@ -83,6 +84,7 @@ if errorlevel 1 (
 )
 echo ===== LOCK TAKEN board !B! %DATE% %TIME% ===== >> "%L%"
 set "LAST=!B!"
+>"%~dp0last_board.txt" echo !B!
 echo ===== START board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\run_worker.ps1" -BoardId "!B!" -LogPath "%L%"
 set "CLAUDE_EXIT=!ERRORLEVEL!"
