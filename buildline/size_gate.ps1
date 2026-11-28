@@ -33,7 +33,21 @@ function Skip-StateFile([string]$f) {
 
 $totalLines   = 0
 $touchedFiles = @()
+
+if (-not $BaseSha) {
+    Add-Content -LiteralPath $VerdictFile "===== SIZE GATE FAIL: BaseSha is empty - cannot measure the diff ====="
+    exit 1
+}
+$resolvedSha = & git rev-parse --verify "${BaseSha}^{commit}" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Add-Content -LiteralPath $VerdictFile "===== SIZE GATE FAIL: BaseSha '$BaseSha' does not resolve to a commit ====="
+    exit 1
+}
 $numstat = & git diff --numstat "${BaseSha}...HEAD" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Add-Content -LiteralPath $VerdictFile "===== SIZE GATE FAIL: git diff failed (exit $LASTEXITCODE) - cannot measure ====="
+    exit 1
+}
 foreach ($line in $numstat) {
     if ($line -match '^(\d+)\s+(\d+)\s+(.+)$') {
         $file = $Matches[3].Trim()
