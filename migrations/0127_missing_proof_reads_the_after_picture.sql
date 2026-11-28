@@ -95,33 +95,63 @@ BEGIN
     AND pg.account_id = v_account_id
     AND pg.id = ANY(COALESCE(v_delivered_ids, ARRAY[]::bigint[]));
 
-  -- MISSING: an item is absent only when the after picture confirms it is not there.
-  -- Proof reads from the after picture, not from the absence of a claim.
-  -- If there is no after picture the item is listed but absence cannot be confirmed.
-  -- If the item text names a shape object that IS present in the after picture,
-  -- the item is not returned as missing at all.
+  -- MISSING: match by object identity, not raw item text.
+  -- s: strip arg list (everything from first '(' onwards).
+  -- p: split on '.' → schema_part (first segment, if dot present), base_name (last segment).
+  --    base_name must look like a valid Postgres identifier (letters/digits/underscores/$);
+  --    free-text items that contain spaces or other non-identifier characters return '' and
+  --    are reported with an explains-so proof rather than a false absence claim.
+  -- Postgres-style case: compare lowercased (unquoted names fold to lowercase).
   RETURN QUERY
   SELECT
     'MISSING'::text,
     pg.item_text,
     CASE
+      WHEN p.base_name = '' THEN
+        'plan item cannot be resolved to an object identity; absence cannot be proved'
       WHEN v_after_pic IS NULL THEN
         'no after picture taken for this job'
       ELSE
         'looked in after picture ' || v_after_pic::text
-          || '; no shape object named ' || quote_literal(pg.item_text) || ' found'
+          || '; no object '
+          || CASE WHEN p.schema_part <> '' THEN p.schema_part || '.' ELSE '' END
+          || p.base_name
+          || ' found'
     END
   FROM guardops.plan_given pg
+  CROSS JOIN LATERAL (
+    SELECT trim(
+             CASE WHEN strpos(trim(pg.item_text), '(') > 0
+                  THEN left(trim(pg.item_text), strpos(trim(pg.item_text), '(') - 1)
+                  ELSE trim(pg.item_text)
+             END
+           ) AS stripped
+  ) AS s
+  CROSS JOIN LATERAL (
+    SELECT
+      CASE WHEN lower(trim(split_part(s.stripped, '.', -1))) ~ '^[a-z_][a-z0-9_$]*$'
+           THEN lower(trim(split_part(s.stripped, '.', -1)))
+           ELSE ''
+      END AS base_name,
+      CASE WHEN strpos(s.stripped, '.') > 0
+           THEN lower(trim(split_part(s.stripped, '.', 1)))
+           ELSE ''
+      END AS schema_part
+  ) AS p
   WHERE pg.job_id     = p_job_id
     AND pg.account_id = v_account_id
     AND NOT (pg.id = ANY(COALESCE(v_delivered_ids, ARRAY[]::bigint[])))
-    AND NOT EXISTS (
-      SELECT 1
-        FROM guardops.shape_object so
-       WHERE so.picture_id  = v_after_pic
-         AND so.account_id  = v_account_id
-         AND lower(so.schema_name || '.' || split_part(so.object_name, '(', 1))
-             = lower(pg.item_text)
+    AND (
+      p.base_name = ''
+      OR v_after_pic IS NULL
+      OR NOT EXISTS (
+        SELECT 1
+          FROM guardops.shape_object so
+         WHERE so.picture_id = v_after_pic
+           AND so.account_id = v_account_id
+           AND lower(split_part(so.object_name, '(', 1)) = p.base_name
+           AND (p.schema_part = '' OR lower(so.schema_name) = p.schema_part)
+      )
     );
 
   RETURN QUERY
