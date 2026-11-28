@@ -16,6 +16,11 @@ try {
 
     # Step 1: list files touched in HEAD commit, keep only migrations/*.sql
     $raw = @(& git show --name-only --pretty=format: HEAD 2>&1 | Where-Object { $_ -ne '' })
+    if ($LASTEXITCODE -ne 0) {
+        Set-Content -LiteralPath $resultPath -Value 'UNREADABLE' -Encoding UTF8
+        Log("apply_and_prove: git show failed (exit $LASTEXITCODE) - UNREADABLE")
+        exit 0
+    }
     $migrations = @($raw | Where-Object { $_ -match '^migrations/.*\.sql$' })
 
     if ($migrations.Count -eq 0) {
