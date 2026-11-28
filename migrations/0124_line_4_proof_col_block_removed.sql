@@ -15,8 +15,9 @@ DO $preflight$
 BEGIN
   IF coalesce(md5((SELECT prosrc FROM pg_catalog.pg_proc
      WHERE oid = to_regprocedure('guardops.page_lines(bigint, bigint)'))), '')
-     NOT IN ('7d4e468ac049b074d84cb41dbca5b10f') THEN
-    RAISE EXCEPTION '0124 REFUSED: page_lines(bigint,bigint) is not the 0123 body (not landed, or 0124 already fired).';
+     NOT IN ('7d4e468ac049b074d84cb41dbca5b10f',
+              'e8cf2094105e8cca6904bb3524d5af74') THEN
+    RAISE EXCEPTION '0124 REFUSED: page_lines(bigint,bigint) is not the 0123 or prior-0124 body (not landed, or already fixed).';
   END IF;
   IF coalesce(md5((SELECT prosrc FROM pg_catalog.pg_proc
      WHERE oid = to_regprocedure('guardops.page_lines(bigint)'))), '')
@@ -55,6 +56,7 @@ DECLARE
   v_deleted_body    text;
   v_deleted_proof   text;
   v_deleted_detail  text;
+  v_delivered_names text[];
 BEGIN
   PERFORM guardops.act_as_house(p_customer);
 
@@ -107,6 +109,29 @@ BEGIN
     v_deleted_body, v_deleted_detail
   FROM guardops.job_verdict(p_job_id) AS jv;
 
+  -- Delivered-names set: in AFTER picture, absent from BEFORE, not in claim.added.
+  -- An object belongs here only if the picture says it arrived this job AND it was
+  -- not flagged as an unrequested addition. This is what line 4 is allowed to claim.
+  SELECT array_agg(DISTINCT so.schema_name || '.' || split_part(so.object_name, '(', 1))
+    INTO v_delivered_names
+    FROM guardops.shape_object so
+   WHERE so.picture_id = v_after_pic
+     AND so.account_id = v_account
+     AND NOT EXISTS (
+       SELECT 1 FROM guardops.shape_object sb
+        WHERE sb.picture_id  = v_before_pic
+          AND sb.account_id  = v_account
+          AND sb.schema_name = so.schema_name
+          AND sb.object_name = so.object_name
+     )
+     AND so.schema_name || '.' || split_part(so.object_name, '(', 1) NOT IN (
+       SELECT a
+         FROM guardops.claim c
+        CROSS JOIN LATERAL unnest(COALESCE(c.added, ARRAY[]::text[])) AS a
+        WHERE c.job_id     = p_job_id
+          AND c.account_id = v_account
+     );
+
   -- Proof for DELIVERED: actual changed lines from commit_object.
   SELECT string_agg(
     coalesce(
@@ -126,6 +151,11 @@ BEGIN
               ON  co.commit_seen_id = cs.id
               AND co.account_id     = v_account
               AND co.obj_lines IS NOT NULL
+              AND EXISTS (
+                SELECT 1
+                  FROM unnest(COALESCE(v_delivered_names, ARRAY[]::text[])) AS dn(name)
+                 WHERE co.obj_lines LIKE '%' || dn.name || '%'
+              )
         WHERE pc.plan_given_id = pg.id
           AND pc.account_id    = v_account),
       'nothing to prove'
@@ -296,9 +326,10 @@ DECLARE
 BEGIN
   BEGIN
 
-    -- check 2: fixture — planned delivery vs unrequested addition, different objects.
-    --          Line 4 must have obj_lines (+CREATE) and no Before:/After: col block.
-    --          Line 6 must have both Before: and After: for the added object.
+    -- check 2: fixture — one commit touching two .sql files; only the planned object
+    --          must appear on line 4. Line 4 must have +CREATE for the planned obj,
+    --          no col block, and must NOT carry the unrequested obj. Line 6 must
+    --          have both Before: and After: for the added object.
     INSERT INTO guardops.account (name) VALUES ('0124_proof') RETURNING id INTO v_acct;
     INSERT INTO guardops.customer (account_id, external_id)
       VALUES (v_acct, '0124_proof') RETURNING id INTO v_cust;
@@ -325,7 +356,9 @@ BEGIN
       'GO-' || v_job::text || '-1 fixture',
       jsonb_build_object(
         'migrations/0124_proof.sql',
-        '+CREATE TABLE guardops.tbl_0124_proof_planned (p_id bigint, p_val text)'
+        '+CREATE TABLE guardops.tbl_0124_proof_planned (p_id bigint, p_val text)',
+        'migrations/0124_proof_added.sql',
+        '+CREATE TABLE guardops.tbl_0124_proof_added (a_id bigint, a_val text)'
       ),
       v_pull_id
     );
@@ -348,6 +381,12 @@ BEGIN
     END IF;
     IF v_proof_4 LIKE '%Before:%' THEN
       RAISE EXCEPTION '0124 fixture: line 4 must NOT have col block (Before:), got [%]', v_proof_4;
+    END IF;
+    IF v_proof_4 NOT LIKE '%tbl_0124_proof_planned%' THEN
+      RAISE EXCEPTION '0124 fixture: line 4 must show planned obj (tbl_0124_proof_planned), got [%]', v_proof_4;
+    END IF;
+    IF v_proof_4 LIKE '%tbl_0124_proof_added%' THEN
+      RAISE EXCEPTION '0124 fixture: line 4 must NOT show unrequested obj (tbl_0124_proof_added), got [%]', v_proof_4;
     END IF;
     RAISE NOTICE '0124 fixture line_4 pass=true';
 
