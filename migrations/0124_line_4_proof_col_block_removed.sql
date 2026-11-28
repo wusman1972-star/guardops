@@ -16,7 +16,8 @@ BEGIN
   IF coalesce(md5((SELECT prosrc FROM pg_catalog.pg_proc
      WHERE oid = to_regprocedure('guardops.page_lines(bigint, bigint)'))), '')
      NOT IN ('7d4e468ac049b074d84cb41dbca5b10f',
-              'e8cf2094105e8cca6904bb3524d5af74') THEN
+              'e8cf2094105e8cca6904bb3524d5af74',
+              'd4d96e464aaddb66f677733e29fefc0f') THEN
     RAISE EXCEPTION '0124 REFUSED: page_lines(bigint,bigint) is not the 0123 or prior-0124 body (not landed, or already fixed).';
   END IF;
   IF coalesce(md5((SELECT prosrc FROM pg_catalog.pg_proc
@@ -151,11 +152,19 @@ BEGIN
               ON  co.commit_seen_id = cs.id
               AND co.account_id     = v_account
               AND co.obj_lines IS NOT NULL
-              AND EXISTS (
-                SELECT 1
-                  FROM unnest(COALESCE(v_delivered_names, ARRAY[]::text[])) AS dn(name)
-                 WHERE co.obj_lines LIKE '%' || dn.name || '%'
-              )
+              AND lower(replace(
+                    COALESCE(
+                      (regexp_match(
+                        co.obj_lines,
+                        '(?i)(?:^|[\r\n])[+\- ]*(?:create(?:\s+or\s+replace)?(?:\s+(?:temp(?:orary)?))?(?:\s+unlogged)?\s+(?:(?:materialized\s+)?view|table|function|type|sequence|trigger)|alter\s+(?:table|view|type))\s+(?:if\s+not\s+exists\s+)?((?:"[^"]*"|[A-Za-z_]\w*)\.(?:"[^"]*"|[A-Za-z_]\w*))'
+                      ))[1],
+                      ''
+                    ),
+                    '"', ''
+                  )) = ANY(
+                    SELECT lower(dn.name)
+                      FROM unnest(COALESCE(v_delivered_names, ARRAY[]::text[])) AS dn(name)
+                  )
         WHERE pc.plan_given_id = pg.id
           AND pc.account_id    = v_account),
       'nothing to prove'
@@ -345,8 +354,8 @@ BEGIN
     v_plans := guardops.plan_given_add(v_job, ARRAY['add planned table']);
 
     -- Create both tables AFTER job_start so neither appears in the before picture.
-    EXECUTE 'CREATE TABLE guardops.tbl_0124_proof_planned (p_id bigint, p_val text)';
-    EXECUTE 'CREATE TABLE guardops.tbl_0124_proof_added   (a_id bigint, a_val text)';
+    EXECUTE 'CREATE TABLE guardops.invoice (inv_id bigint, inv_val text)';
+    EXECUTE 'CREATE TABLE guardops.invoice_audit (aud_id bigint, aud_val text)';
 
     SELECT pl.pull_id INTO v_pull_id FROM guardops.pull_begin(v_link) AS pl;
     v_cs := guardops.commit_record(
@@ -356,9 +365,9 @@ BEGIN
       'GO-' || v_job::text || '-1 fixture',
       jsonb_build_object(
         'migrations/0124_proof.sql',
-        '+CREATE TABLE guardops.tbl_0124_proof_planned (p_id bigint, p_val text)',
+        '+CREATE TABLE guardops.invoice (inv_id bigint, inv_val text)',
         'migrations/0124_proof_added.sql',
-        '+CREATE TABLE guardops.tbl_0124_proof_added (a_id bigint, a_val text)'
+        '+CREATE TABLE guardops.invoice_audit (aud_id bigint, aud_val text)'
       ),
       v_pull_id
     );
@@ -367,7 +376,7 @@ BEGIN
     PERFORM guardops.job_finish(
       v_job,
       v_plans,
-      ARRAY['guardops.tbl_0124_proof_added'],
+      ARRAY['guardops.invoice_audit'],
       ARRAY[]::text[]
     );
 
@@ -382,11 +391,11 @@ BEGIN
     IF v_proof_4 LIKE '%Before:%' THEN
       RAISE EXCEPTION '0124 fixture: line 4 must NOT have col block (Before:), got [%]', v_proof_4;
     END IF;
-    IF v_proof_4 NOT LIKE '%tbl_0124_proof_planned%' THEN
-      RAISE EXCEPTION '0124 fixture: line 4 must show planned obj (tbl_0124_proof_planned), got [%]', v_proof_4;
+    IF v_proof_4 NOT LIKE '%guardops.invoice%' THEN
+      RAISE EXCEPTION '0124 fixture: line 4 must show planned obj (guardops.invoice), got [%]', v_proof_4;
     END IF;
-    IF v_proof_4 LIKE '%tbl_0124_proof_added%' THEN
-      RAISE EXCEPTION '0124 fixture: line 4 must NOT show unrequested obj (tbl_0124_proof_added), got [%]', v_proof_4;
+    IF v_proof_4 LIKE '%invoice_audit%' THEN
+      RAISE EXCEPTION '0124 fixture: line 4 must NOT show unrequested obj (invoice_audit), got [%]', v_proof_4;
     END IF;
     RAISE NOTICE '0124 fixture line_4 pass=true';
 
@@ -396,8 +405,8 @@ BEGIN
     IF v_proof_6 NOT LIKE '%After:%' THEN
       RAISE EXCEPTION '0124 fixture: line 6 must have "After:", got [%]', v_proof_6;
     END IF;
-    IF v_proof_6 NOT LIKE '%a_id%' THEN
-      RAISE EXCEPTION '0124 fixture: line 6 must list added table columns (a_id), got [%]', v_proof_6;
+    IF v_proof_6 NOT LIKE '%aud_id%' THEN
+      RAISE EXCEPTION '0124 fixture: line 6 must list added table columns (aud_id), got [%]', v_proof_6;
     END IF;
     RAISE NOTICE '0124 fixture line_6 pass=true';
 
