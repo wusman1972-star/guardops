@@ -19,6 +19,13 @@ if ($cur -eq $br) {
         Write-Host $msg
         $out = git rebase master 2>&1
         $out | ForEach-Object { Add-Content -LiteralPath $LogPath -Value $_ -Encoding UTF8; Write-Host $_ }
+        if ($LASTEXITCODE -ne 0) {
+            git rebase --abort 2>&1 | Out-Null
+            $msg = "REBASE FAILED: rebase of line onto master exited $LASTEXITCODE - aborted, tree is clean, refusing to continue"
+            Add-Content -LiteralPath $LogPath -Value $msg -Encoding UTF8
+            Write-Host $msg
+            exit 1
+        }
     } else {
         Add-Content -LiteralPath $LogPath -Value 'ALREADY ON line' -Encoding UTF8
         Write-Host 'ALREADY ON line'
