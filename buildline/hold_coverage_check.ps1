@@ -15,7 +15,7 @@ try {
     $board = $env:BOARD_ID
     if ([string]::IsNullOrWhiteSpace($board)) { Write-Output 'UNKNOWN'; exit 0 }
 
-    $masterSha = (& git rev-parse origin/master 2>&1 | Out-String).Trim()
+    $masterSha = (& git -C $env:GOPS_REPO rev-parse origin/master 2>&1 | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($masterSha) -or $masterSha -notmatch '^[0-9a-f]{40}$') {
         Write-Output 'UNKNOWN'; exit 0
     }

@@ -28,6 +28,7 @@ try {
     $dir = Join-Path $env:GOPS_REPO 'tools\verdicts'
     $files = @(Get-ChildItem -Path $dir -Filter ("cr_verdict_" + $b + "_*") -ErrorAction SilentlyContinue |
                Sort-Object LastWriteTime)
+    $bestCount = -1
     foreach ($file in $files) {
         $lines = Get-Content -LiteralPath $file.FullName
         $finished = $false
@@ -44,9 +45,10 @@ try {
                 $fileFindings += "${sev} in ${fn}: ${ttl}"
             }
         }
-        if ($finished -and $fileFindings.Count -gt 0) {
-            $verdictFile = $file.Name
-            $findingLines += $fileFindings
+        if ($finished -and $fileFindings.Count -gt $bestCount) {
+            $bestCount    = $fileFindings.Count
+            $findingLines = $fileFindings
+            $verdictFile  = $file.Name
         }
     }
 } catch {
