@@ -118,6 +118,11 @@ echo ===== BRANCH board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\branch_checkout.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 REM --- Pre-review commit: stage migrations/ and tools/, commit before CR sees dirty files ---
 set "HOLDMERGE="
+set "HOLDFILE=%GOPS_REPO%\tools\held_branch.txt"
+if exist "!HOLDFILE!" (
+    set "HOLDMERGE=-BranchOnly"
+    echo ===== HOLD FILE ACTIVE board !B! %DATE% %TIME% - prior hold persists until full-branch review is clean ===== >> "%L%"
+)
 echo ===== PRE-REVIEW COMMIT board !B! %DATE% %TIME% ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\pre_review_commit.ps1" -BoardId "!B!" -LogPath "%L%" -RepoPath "%GOPS_REPO%"
 if errorlevel 1 (
@@ -222,8 +227,16 @@ if not "!SEVSTOP!"=="0" (
     echo ===== FILE HOLD BOARD board !B! %DATE% %TIME% ===== >> "%L%"
     powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\file_hold.ps1"
 )
-REM A merge that is NOT held clears the held marker, so the next job starts clean from master.
-if "!HOLDMERGE!"=="" del /q "%GOPS_REPO%\tools\held_branch.txt" 2>nul
+REM --- Persistent-hold resolution: a readable gate returning zero is the only automatic clear ---
+if "!SEVSTOP!"=="0" if not defined SEVBAD (
+    del /q "!HOLDFILE!" 2>nul
+    set "HOLDMERGE="
+    echo ===== HOLD CLEARED board !B! %DATE% %TIME% - full-branch review passed zero critical/major ===== >> "%L%"
+)
+if exist "!HOLDFILE!" (
+    set "HOLDMERGE=-BranchOnly"
+    echo ===== HOLD FILE ACTIVE board !B! %DATE% %TIME% - prior hold persists, merge blocked ===== >> "%L%"
+)
 echo ===== GIT PUSH board !B! %DATE% %TIME% - merge hold: [!HOLDMERGE!] ===== >> "%L%"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%GOPS_REPO%\buildline\publish_branch.ps1" -LogPath "%L%" -BoardId "!B!" -RepoPath "%GOPS_REPO%" !HOLDMERGE!
 echo ===== FETCH REAL MASTER board !B! %DATE% %TIME% ===== >> "%L%"
